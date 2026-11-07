@@ -1,15 +1,26 @@
 {
   "name": "chronicle-engine-ai",
+  "private": true,
+  "version": "0.1.0",
+  "engines": {
+    "node": ">=22.18.0",
+    "npm": ">=10"
+  },
+  "packageManager": "npm@11.20.0",
   "workspaces": ["frontend", "backend"], 
   "scripts": {
     "build": "npm run build --workspace frontend",
-    "test": "npm run test --workspace frontend",
-    "typecheck": "npm run typecheck --workspace frontend",
+    "test": "npm run test --workspaces --if-present && node --test scripts/*.test.mjs",
+    "typecheck": "npm run typecheck --workspace frontend && npm run check --workspace backend",
+    "check": "npm run check:repository && npm test && npm run typecheck && npm run build",
+    "check:repository": "node scripts/check-repository.mjs",
+    "start": "npm run start --workspace backend",
+    "smoke": "node scripts/smoke.mjs",
     "dev-frontend": "npm run dev --prefix frontend",
     "dev-backend": "npm run dev --prefix backend",
     "dev": "concurrently \"npm run dev-frontend\" \"npm run dev-backend\""
   },
   "devDependencies": {
-    "concurrently": "latest"
+    "concurrently": "10.0.6"
   }
 }

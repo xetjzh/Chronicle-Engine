@@ -3,21 +3,26 @@
   "type": "module",
   "private": true,
   "version": "0.0.0",
+  "engines": {
+    "node": ">=22.18.0"
+  },
   "description": "Node backend for proxying Google Cloud API requests",
   "main": "server.js",
   "scripts": {
-    "start": "node --env-file=.env.local server.js",
-    "dev": "nodemon --env-file=.env.local server.js"
+    "start": "node --env-file-if-exists=.env.local server.js",
+    "dev": "nodemon --exec \"node --env-file-if-exists=.env.local\" server.js",
+    "test": "node --test",
+    "check": "node --check server.js"
   },
   "dependencies": {
-    "dotenv": "^17.2.3",
-    "express": "^5.2.1",
-    "google-auth-library": "^10.5.0",
-    "express-rate-limit": "^7.5.0",
-    "ws": "^8.18.0"
+    "dotenv": "17.4.2",
+    "express": "5.3.0",
+    "google-auth-library": "10.9.1",
+    "express-rate-limit": "7.5.1",
+    "ws": "8.22.1"
   },
   "devDependencies": {
-    "@types/node": "^25.2.0",
-    "nodemon": "^3.1.11"
+    "@types/node": "25.9.9",
+    "nodemon": "3.1.14"
   }
 }
