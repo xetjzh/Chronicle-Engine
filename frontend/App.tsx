@@ -1,27 +1,35 @@
-import React, { useState, useEffect } from 'react';
+import React, { lazy, Suspense, useState, useEffect, useRef, useCallback } from 'react';
 import { ProjectData, WorldEvent, ConsistencyIssue, LorebookEntry } from './types';
 import { storageService } from './services/storageService';
-import { GeminiService } from './services/geminiService';
-import { WorldSimConsole } from './components/WorldSimConsole';
-import { NovelEditor } from './components/NovelEditor';
+import { initialProject } from './services/demoWorld';
 import { AuthorDeskEditor } from './components/AuthorDeskEditor';
-import { DocumentLibraryModal } from './components/DocumentLibraryModal';
-import { CharacterManager } from './components/CharacterManager';
-import { WorldEditor } from './components/WorldEditor';
-import { LorebookEditor } from './components/LorebookEditor';
-import { ReaderView } from './components/ReaderView';
-import { AISettingsModal } from './components/AISettingsModal';
-import { AboutSystemModal } from './components/AboutSystemModal';
-import { NarrativeAnalyticsModal } from './components/NarrativeAnalyticsModal';
-import { ChaosOracleModal } from './components/ChaosOracleModal';
+import { Dialog } from './components/Dialog';
+import { parseProjectBackup } from './services/backupValidation';
 import { 
-  Globe, BookOpen, Users, Compass, Eye, ShieldCheck, 
+  Globe, BookOpen, Users, Compass, Eye, ShieldCheck,
   Download, Upload, Sparkles, Settings2, RefreshCw, Cpu, 
-  BookMarked, Database, Feather, FileText, Info, Activity, Dices
+  BookMarked, Feather, FileText, Activity, Dices,
+  ChevronRight, Book, Clock3, ScrollText, CircleHelp, Menu, X, Check, AlertCircle
 } from 'lucide-react';
 
+const WorldSimConsole = lazy(() => import('./components/WorldSimConsole').then(m => ({ default: m.WorldSimConsole })));
+const NovelEditor = lazy(() => import('./components/NovelEditor').then(m => ({ default: m.NovelEditor })));
+const CharacterManager = lazy(() => import('./components/CharacterManager').then(m => ({ default: m.CharacterManager })));
+const WorldEditor = lazy(() => import('./components/WorldEditor').then(m => ({ default: m.WorldEditor })));
+const LorebookEditor = lazy(() => import('./components/LorebookEditor').then(m => ({ default: m.LorebookEditor })));
+const ReaderView = lazy(() => import('./components/ReaderView').then(m => ({ default: m.ReaderView })));
+const DocumentLibraryModal = lazy(() => import('./components/DocumentLibraryModal').then(m => ({ default: m.DocumentLibraryModal })));
+const AISettingsModal = lazy(() => import('./components/AISettingsModal').then(m => ({ default: m.AISettingsModal })));
+const AboutSystemModal = lazy(() => import('./components/AboutSystemModal').then(m => ({ default: m.AboutSystemModal })));
+const NarrativeAnalyticsModal = lazy(() => import('./components/NarrativeAnalyticsModal').then(m => ({ default: m.NarrativeAnalyticsModal })));
+const ChaosOracleModal = lazy(() => import('./components/ChaosOracleModal').then(m => ({ default: m.ChaosOracleModal })));
+
+function LoadingPanel() {
+  return <div className="workspace-loading" role="status"><RefreshCw className="h-5 w-5 animate-spin" /><span>正在准备创作空间…</span></div>;
+}
+
 export default function App() {
-  const [project, setProject] = useState<ProjectData>(() => storageService.loadProject());
+  const [project, setProject] = useState<ProjectData>(() => structuredClone(initialProject));
   const [currentTab, setCurrentTab] = useState<'SIMULATION' | 'NOVEL' | 'AUTHOR_DESK' | 'CHARACTERS' | 'WORLD' | 'LOREBOOK' | 'READER'>('AUTHOR_DESK');
   const [selectedEventForChapter, setSelectedEventForChapter] = useState<WorldEvent[]>([]);
   const [showAboutModal, setShowAboutModal] = useState(false);
@@ -32,48 +40,136 @@ export default function App() {
   const [auditIssues, setAuditIssues] = useState<ConsistencyIssue[]>([]);
   const [isAuditing, setIsAuditing] = useState(false);
   const [showAuditModal, setShowAuditModal] = useState(false);
+  const [auditError, setAuditError] = useState('');
+  const [isRestoring, setIsRestoring] = useState(true);
+  const [restoreError, setRestoreError] = useState('');
+  const [restoreAttempt, setRestoreAttempt] = useState(0);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [compactNavigation, setCompactNavigation] = useState(() => window.matchMedia('(max-width: 900px)').matches);
+  const [saveState, setSaveState] = useState<'saved' | 'saving' | 'error'>('saved');
+  const [notice, setNotice] = useState<{ message: string; error?: boolean } | null>(null);
+  const latestProject = useRef(project);
+  const saveRevision = useRef(0);
+  const needsSave = useRef(false);
+  const importRef = useRef<HTMLInputElement>(null);
+  const navigationRef = useRef<HTMLElement>(null);
+  const navigationTrigger = useRef<HTMLButtonElement>(null);
 
-  // Asynchronous full IndexedDB hydration on app start
+  // Finish restoration before mounting editors, so late data cannot replace new typing.
   useEffect(() => {
+    let cancelled = false;
+    setIsRestoring(true);
+    setRestoreError('');
     storageService.loadProjectAsync().then(loaded => {
-      if (loaded && loaded.chapters && loaded.chapters.length > project.chapters.length) {
-        setProject(loaded);
+      if (!cancelled && loaded) {
+        const restored = parseProjectBackup(JSON.stringify(loaded));
+        latestProject.current = restored;
+        setProject(restored);
       }
-    });
+    }).catch((error) => {
+      if (!cancelled) setRestoreError(error instanceof Error ? error.message : '完整存档暂时无法读取，请重试。');
+    }).finally(() => { if (!cancelled) setIsRestoring(false); });
+    return () => { cancelled = true; };
+  }, [restoreAttempt]);
+
+  const handleUpdateProject = useCallback((p: ProjectData) => {
+    latestProject.current = p;
+    needsSave.current = true;
+    saveRevision.current += 1;
+    setSaveState('saving');
+    setProject(p);
   }, []);
 
-  const handleUpdateProject = (p: ProjectData) => {
-    setProject(p);
-    storageService.saveProject(p);
-  };
+  useEffect(() => {
+    if (isRestoring || restoreError || !needsSave.current) return;
+    const revision = saveRevision.current;
+    const timer = window.setTimeout(() => {
+      storageService.saveProjectAsync(project).then(() => {
+        if (revision !== saveRevision.current) return;
+        needsSave.current = false;
+        setSaveState('saved');
+      }).catch(() => {
+        if (revision !== saveRevision.current) return;
+        setSaveState('error');
+        setNotice({ message: '存盘未完成，请导出备份，并检查浏览器存储空间。', error: true });
+      });
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [project, isRestoring, restoreError]);
+
+  useEffect(() => {
+    const flush = () => { if (needsSave.current) storageService.saveProject(latestProject.current); };
+    window.addEventListener('pagehide', flush);
+    return () => window.removeEventListener('pagehide', flush);
+  }, []);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), notice.error ? 9000 : 4500);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
+  useEffect(() => {
+    const query = window.matchMedia('(max-width: 900px)');
+    const change = () => { setCompactNavigation(query.matches); setMobileNavOpen(false); };
+    query.addEventListener('change', change);
+    return () => query.removeEventListener('change', change);
+  }, []);
+
+  useEffect(() => {
+    if (!mobileNavOpen || !compactNavigation) return;
+    const navigation = navigationRef.current;
+    const controls = () => Array.from(navigation?.querySelectorAll<HTMLButtonElement>('button:not([disabled])') || [])
+      .filter(button => button.getClientRects().length > 0);
+    controls()[0]?.focus();
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); setMobileNavOpen(false); }
+      if (event.key !== 'Tab') return;
+      const buttons = controls();
+      const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      if ((event.shiftKey && index <= 0) || (!event.shiftKey && (index < 0 || index === buttons.length - 1))) {
+        event.preventDefault();
+        buttons[event.shiftKey ? buttons.length - 1 : 0]?.focus();
+      }
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('keydown', handleKey);
+      if (!document.querySelector('[role="dialog"]')) navigationTrigger.current?.focus();
+    };
+  }, [mobileNavOpen, compactNavigation]);
 
   const handleRunAudit = async () => {
+    if (isAuditing || isRestoring || restoreError) return;
     setIsAuditing(true);
+    setAuditError('');
+    setAuditIssues([]);
     setShowAuditModal(true);
+    setMobileNavOpen(false);
     try {
+      const { GeminiService } = await import('./services/geminiService');
       const issues = await GeminiService.auditConsistency(project);
       setAuditIssues(issues);
+    } catch (error) {
+      setAuditError(error instanceof Error ? error.message : '审计暂时无法完成，请检查模型设置后重试。');
     } finally {
       setIsAuditing(false);
     }
   };
 
-  const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportBackup = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const parsed = JSON.parse(event.target?.result as string);
-        if (parsed.id && parsed.worldName) {
-          handleUpdateProject(parsed);
-          alert('项目备份已成功还原！');
-        }
-      } catch (err) {
-        alert('无效的备份文件格式！');
-      }
-    };
-    reader.readAsText(file);
+    try {
+      const parsed = parseProjectBackup(await file.text());
+      setRestoreError('');
+      handleUpdateProject(parsed);
+      setSelectedEventForChapter([]);
+      setNotice({ message: `已还原「${parsed.title}」，共 ${parsed.chapters.length} 个章节。` });
+    } catch (error) {
+      setNotice({ message: error instanceof Error ? error.message : '无法读取备份文件。', error: true });
+    }
   };
 
   const handleAddLorebookEntry = (lore: LorebookEntry) => {
@@ -82,186 +178,201 @@ export default function App() {
   };
 
   const activeProvider = project.aiConfig?.activeProvider || 'gemini';
+  const activeModel = activeProvider === 'ollama' ? project.aiConfig?.ollama?.model : activeProvider === 'openai_compatible' ? project.aiConfig?.openaiCompatible?.model : project.aiConfig?.gemini?.model;
+  const totalWords = project.chapters.reduce((sum, chapter) => sum + (chapter.wordCount || 0), 0);
+  const navGroups = [
+    {
+      label: '创作空间',
+      items: [
+        { id: 'AUTHOR_DESK', label: '纯享写作', detail: '沉浸式码字', icon: Feather },
+        { id: 'NOVEL', label: 'AI 创作流水线', detail: `${project.chapters.length} 个章节`, icon: BookOpen },
+      ],
+    },
+    {
+      label: '世界档案',
+      items: [
+        { id: 'SIMULATION', label: '世界模拟', detail: '自主演进控制台', icon: Globe },
+        { id: 'LOREBOOK', label: '世界设定集', detail: 'Lorebook', icon: BookMarked },
+        { id: 'CHARACTERS', label: '人物档案', detail: `${project.characters.length} 位角色`, icon: Users },
+        { id: 'WORLD', label: '世界法则', detail: '地图 · 阵营 · 规则', icon: Compass },
+      ],
+    },
+    {
+      label: '阅读',
+      items: [
+        { id: 'READER', label: '沉浸阅读', detail: '预览作品', icon: Eye },
+      ],
+    },
+  ] as const;
+  const pageDetails: Record<typeof currentTab, { title: string; subtitle: string }> = {
+    AUTHOR_DESK: { title: '纯享写作', subtitle: '留一点安静的时间，让故事自然生长。' },
+    NOVEL: { title: 'AI 创作流水线', subtitle: '从世界事件出发，逐章搭建你的长篇叙事。' },
+    SIMULATION: { title: '世界模拟', subtitle: '让人物与世界在时间中自主演进。' },
+    LOREBOOK: { title: '世界设定集', subtitle: '整理设定、伏笔与故事中的重要事实。' },
+    CHARACTERS: { title: '人物档案', subtitle: '追踪角色的关系、动机与命运。' },
+    WORLD: { title: '世界法则', subtitle: '构筑地点、势力与维系世界的规则。' },
+    READER: { title: '沉浸阅读', subtitle: '回到故事之中，检视章节与叙事节奏。' },
+  };
+  const writingProgress = Math.min(
+    100,
+    Math.round(((project.deskSettings?.currentSessionWords || 0) / Math.max(1, project.deskSettings?.targetDailyWords || 6000)) * 100)
+  );
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-purple-500/30 selection:text-purple-200">
-      {/* Top Glass Navigation Bar */}
-      <header className="border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-xl sticky top-0 z-40 px-4 sm:px-8 py-2.5 transition-all">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-purple-600 via-indigo-600 to-pink-500 flex items-center justify-center shadow-lg shadow-purple-500/25 ring-1 ring-white/20">
-              <Compass className="w-4 h-4 text-white" />
+    <div className="chronicle-shell min-h-screen text-slate-100 font-sans selection:bg-amber-400/25 selection:text-amber-100">
+      <a className="skip-link" href="#workspace-main">跳到创作内容</a>
+      {mobileNavOpen && <button className="nav-backdrop" aria-label="关闭导航菜单" onClick={() => setMobileNavOpen(false)} />}
+      <aside ref={navigationRef} id="workspace-navigation" inert={compactNavigation && !mobileNavOpen} role={compactNavigation && mobileNavOpen ? 'dialog' : undefined} aria-modal={compactNavigation && mobileNavOpen ? true : undefined} aria-label="导航和创作工具" className={`chronicle-sidebar ${mobileNavOpen ? 'is-open' : ''}`}>
+        <div className="brand-lockup">
+          <div className="brand-mark"><Compass className="h-5 w-5" /></div>
+          <div className="min-w-0">
+            <h1 className="font-display text-sm font-bold tracking-[0.16em] text-stone-100">CHRONICLE</h1>
+            <p className="mt-0.5 text-[9px] uppercase tracking-[0.25em] text-amber-200/60">Engine · Story atelier</p>
+          </div>
+          <button className="mobile-nav-close" aria-label="关闭导航菜单" onClick={() => setMobileNavOpen(false)}><X className="h-5 w-5" /></button>
+        </div>
+
+        <div className="project-card">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] uppercase tracking-[0.18em] text-stone-500">当前作品</span>
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.65)]" />
+          </div>
+          <p className="mt-2 truncate font-serif text-sm text-stone-100">{project.title}</p>
+          <p className="mt-1 truncate text-[11px] text-stone-500">{project.worldName}</p>
+        </div>
+
+        <nav className="sidebar-navigation" aria-label="主导航">
+          {navGroups.map(group => (
+            <div key={group.label} className="nav-group">
+              <p className="nav-group-label">{group.label}</p>
+              {group.items.map(item => {
+                const Icon = item.icon;
+                const active = currentTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => { setCurrentTab(item.id); setMobileNavOpen(false); }}
+                    aria-current={active ? 'page' : undefined}
+                    className={`nav-item ${active ? 'nav-item-active' : ''}`}
+                  >
+                    <span className="nav-icon"><Icon className="h-4 w-4" /></span>
+                    <span className="min-w-0 flex-1 text-left">
+                      <span className="block text-xs font-medium">{item.label}</span>
+                      <span className="nav-detail">{item.detail}</span>
+                    </span>
+                    {active && <ChevronRight className="h-3.5 w-3.5 text-amber-200/70" />}
+                  </button>
+                );
+              })}
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="font-serif font-bold text-base tracking-wider text-white">Chronicle Engine</h1>
-                <span className="text-[10px] font-mono bg-purple-950/90 text-purple-300 px-2 py-0.5 rounded-full border border-purple-800/80">
-                  超长篇工作站
-                </span>
-                <button
-                  onClick={() => setShowAISettings(true)}
-                  className="inline-flex items-center gap-1 text-[10px] font-mono bg-slate-800/90 hover:bg-slate-700/90 text-slate-300 px-2 py-0.5 rounded-full border border-slate-700 transition"
-                  title="点击切换与配置模型"
-                >
-                  {activeProvider === 'gemini' ? (
-                    <>
-                      <Sparkles className="w-3 h-3 text-purple-400" />
-                      Gemini 2.5
-                    </>
-                  ) : activeProvider === 'ollama' ? (
-                    <>
-                      <Cpu className="w-3 h-3 text-emerald-400" />
-                      Ollama 本地
-                    </>
-                  ) : (
-                    <>
-                      <span className="w-2 h-2 rounded-full bg-blue-400"></span>
-                      OpenAI兼容
-                    </>
-                  )}
-                </button>
-              </div>
-              <p className="text-[11px] text-slate-400">自主世界模拟 · 码字软件台 · TXT/EPUB/PDF 参考书</p>
+          ))}
+        </nav>
+
+        <div className="sidebar-tools">
+          <p className="nav-group-label">灵感与工具</p>
+          <button disabled={isRestoring || !!restoreError} onClick={() => { setShowAnalyticsModal(true); setMobileNavOpen(false); }} className="tool-link">
+            <Activity className="h-4 w-4 text-emerald-300" />张力图谱
+          </button>
+          <button disabled={isRestoring || !!restoreError} onClick={() => { setShowChaosModal(true); setMobileNavOpen(false); }} className="tool-link">
+            <Dices className="h-4 w-4 text-amber-300" />神谕骰子
+          </button>
+          <button disabled={isRestoring || !!restoreError} onClick={() => { setShowDocLibrary(true); setMobileNavOpen(false); }} className="tool-link">
+            <FileText className="h-4 w-4 text-sky-300" />文献参考
+          </button>
+          <button onClick={handleRunAudit} disabled={isAuditing || isRestoring || !!restoreError} className="tool-link">
+            <ShieldCheck className="h-4 w-4 text-violet-300" />因果审计
+          </button>
+          <button onClick={() => { setShowAboutModal(true); setMobileNavOpen(false); }} className="tool-link mobile-about-link"><CircleHelp className="h-4 w-4" />关于编年引擎</button>
+        </div>
+
+        <div className="sidebar-footer">
+          <div className="mb-2 flex items-center justify-between text-[10px]">
+            <span className="text-stone-500">今日写作</span>
+            <span className="font-mono text-amber-100/80">{project.deskSettings?.currentSessionWords || 0} / {project.deskSettings?.targetDailyWords || 6000}</span>
+          </div>
+          <div className="progress-track"><div className="progress-fill" style={{ width: `${writingProgress}%` }} /></div>
+          <div className="mt-3 flex items-center gap-2 text-[10px] text-stone-500">
+            <Clock3 className="h-3.5 w-3.5 text-amber-200/60" />
+            <span className="truncate">{project.currentSimulationTime}</span>
+          </div>
+        </div>
+      </aside>
+
+      <div className="chronicle-main" inert={compactNavigation && mobileNavOpen}>
+        <header className="workspace-topbar">
+          <div className="flex min-w-0 items-center gap-3">
+            <button ref={navigationTrigger} className="mobile-nav-toggle" aria-label="打开导航和工具" aria-expanded={mobileNavOpen} aria-controls="workspace-navigation" onClick={() => setMobileNavOpen(true)}><Menu className="h-5 w-5" /></button>
+            <div className="topbar-ornament"><Book className="h-4 w-4" /></div>
+            <div className="min-w-0">
+              <p className="text-[10px] uppercase tracking-[0.19em] text-stone-500">Chronicle Engine <span className="px-1 text-stone-700">/</span> {pageDetails[currentTab].title}</p>
+              <p className="mt-0.5 truncate font-serif text-sm text-stone-200">{project.title}</p>
             </div>
           </div>
-
-          {/* Navigation Tabs */}
-          <div className="flex items-center gap-1 bg-slate-900/90 p-1 rounded-xl border border-slate-800/80 text-xs overflow-x-auto shadow-inner">
-            <button
-              onClick={() => setCurrentTab('AUTHOR_DESK')}
-              className={`px-3 py-1.5 rounded-lg font-medium transition flex items-center gap-1.5 whitespace-nowrap ${
-                currentTab === 'AUTHOR_DESK' ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Feather className="w-3.5 h-3.5 text-yellow-300" />
-              码字台 (纯享书写)
-            </button>
-            <button
-              onClick={() => setCurrentTab('NOVEL')}
-              className={`px-3 py-1.5 rounded-lg font-medium transition flex items-center gap-1.5 whitespace-nowrap ${
-                currentTab === 'NOVEL' ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <BookOpen className="w-3.5 h-3.5" />
-              AI流水线 ({project.chapters.length}章)
-            </button>
-            <button
-              onClick={() => setCurrentTab('SIMULATION')}
-              className={`px-3 py-1.5 rounded-lg font-medium transition flex items-center gap-1.5 whitespace-nowrap ${
-                currentTab === 'SIMULATION' ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Globe className="w-3.5 h-3.5" />
-              世界模拟控制台
-            </button>
-            <button
-              onClick={() => setCurrentTab('LOREBOOK')}
-              className={`px-3 py-1.5 rounded-lg font-medium transition flex items-center gap-1.5 whitespace-nowrap ${
-                currentTab === 'LOREBOOK' ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <BookMarked className="w-3.5 h-3.5 text-purple-300" />
-              世界书 (Lorebook)
-            </button>
-            <button
-              onClick={() => setCurrentTab('CHARACTERS')}
-              className={`px-3 py-1.5 rounded-lg font-medium transition flex items-center gap-1.5 whitespace-nowrap ${
-                currentTab === 'CHARACTERS' ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Users className="w-3.5 h-3.5" />
-              人物档案
-            </button>
-            <button
-              onClick={() => setCurrentTab('WORLD')}
-              className={`px-3 py-1.5 rounded-lg font-medium transition flex items-center gap-1.5 whitespace-nowrap ${
-                currentTab === 'WORLD' ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Compass className="w-3.5 h-3.5" />
-              世界法则
-            </button>
-            <button
-              onClick={() => setCurrentTab('READER')}
-              className={`px-3 py-1.5 rounded-lg font-medium transition flex items-center gap-1.5 whitespace-nowrap ${
-                currentTab === 'READER' ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Eye className="w-3.5 h-3.5" />
-              沉浸阅读
-            </button>
-          </div>
-
-          {/* Quick Tools */}
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => setShowAnalyticsModal(true)}
-              className="px-2.5 py-1.5 bg-slate-800/80 hover:bg-slate-700 text-emerald-300 rounded-lg text-xs font-medium border border-slate-700 flex items-center gap-1 transition shadow-sm"
-              title="张力起伏与全书节奏图表分析（开源 StoryMetrics 移植）"
-            >
-              <Activity className="w-3.5 h-3.5 text-emerald-400" />
-              张力图谱
-            </button>
-            <button
-              onClick={() => setShowChaosModal(true)}
-              className="px-2.5 py-1.5 bg-slate-800/80 hover:bg-slate-700 text-yellow-300 rounded-lg text-xs font-medium border border-slate-700 flex items-center gap-1 transition shadow-sm"
-              title="掷出剧情变故神谕骰子（开源 TaleCrafter 机制）"
-            >
-              <Dices className="w-3.5 h-3.5 text-yellow-400" />
-              神谕骰子
-            </button>
-            <button
-              onClick={() => setShowDocLibrary(true)}
-              className="px-2.5 py-1.5 bg-slate-800/80 hover:bg-slate-700 text-purple-300 rounded-lg text-xs font-medium border border-slate-700 flex items-center gap-1 transition shadow-sm"
-              title="打开多格式参考书架"
-            >
-              <FileText className="w-3.5 h-3.5 text-purple-400" />
-              文献参考
-            </button>
+          <div className="topbar-actions">
+            <span className={`save-indicator save-${saveState}`} role="status" title="创作内容保存在当前浏览器">
+              {saveState === 'saving' ? <RefreshCw className="h-3 w-3 animate-spin" /> : saveState === 'error' ? <AlertCircle className="h-3 w-3" /> : <Check className="h-3 w-3" />}
+              <span>{isRestoring ? '恢复存档中' : restoreError ? '等待恢复存档' : saveState === 'saving' ? '正在保存' : saveState === 'error' ? '存盘未完成' : '已在本地保存'}</span>
+            </span>
             <button
               onClick={() => setShowAISettings(true)}
-              className="px-2.5 py-1.5 bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium border border-slate-700 flex items-center gap-1 transition shadow-sm"
-              title="配置 AI 工具端点与参数"
+              className="provider-chip"
+              title="点击切换与配置模型"
+              disabled={isRestoring || !!restoreError}
+              aria-label={`模型设置：${activeModel || activeProvider}`}
             >
-              <Settings2 className="w-3.5 h-3.5 text-purple-400" />
-              AI调优
-            </button>
-            <button
-              onClick={handleRunAudit}
-              className="px-2.5 py-1.5 bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium border border-slate-700 flex items-center gap-1 transition shadow-sm"
-              title="运行一致性与时空穿帮审计"
-            >
-              <ShieldCheck className="w-3.5 h-3.5 text-purple-400" />
-              因果审计
+              {activeProvider === 'gemini' ? <Sparkles className="h-3.5 w-3.5 text-amber-200" /> : activeProvider === 'ollama' ? <Cpu className="h-3.5 w-3.5 text-emerald-300" /> : <span className="h-1.5 w-1.5 rounded-full bg-sky-300" />}
+              <span className="provider-model">{activeModel || (activeProvider === 'gemini' ? 'Gemini' : activeProvider === 'ollama' ? 'Ollama 本地' : 'OpenAI 兼容')}</span>
+              <Settings2 className="h-3 w-3 opacity-50" />
             </button>
             <button
               onClick={() => storageService.exportAsJson(project)}
-              className="px-2.5 py-1.5 bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium border border-slate-700 flex items-center gap-1 transition shadow-sm"
+              className="topbar-icon-button"
               title="导出项目完整数据"
+              aria-label="导出项目备份"
+              disabled={isRestoring || !!restoreError}
             >
-              <Download className="w-3.5 h-3.5 text-purple-400" />
-              备份
+              <Download className="h-4 w-4" /><span className="hidden sm:inline">备份</span>
             </button>
-            <label className="px-2.5 py-1.5 bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium border border-slate-700 flex items-center gap-1 transition cursor-pointer shadow-sm">
-              <Upload className="w-3.5 h-3.5 text-purple-400" />
-              还原
-              <input type="file" accept=".json" onChange={handleImportBackup} className="hidden" />
-            </label>
+            <button className="topbar-icon-button cursor-pointer" title="从 JSON 备份还原" aria-label="还原项目备份" disabled={isRestoring} onClick={() => importRef.current?.click()}>
+              <Upload className="h-4 w-4" /><span className="hidden sm:inline">还原</span>
+            </button>
+            <input ref={importRef} type="file" accept=".json,application/json" onChange={handleImportBackup} className="hidden" aria-label="选择项目备份" />
             <button
               onClick={() => setShowAboutModal(true)}
-              className="p-1.5 bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-medium border border-slate-700 flex items-center gap-1 transition shadow-sm"
+              className="topbar-icon-button topbar-help"
               title="关于系统 · 架构与部署"
+              aria-label="关于编年引擎"
             >
-              <Info className="w-3.5 h-3.5 text-purple-400" />
+              <CircleHelp className="h-4 w-4" />
             </button>
           </div>
-        </div>
-      </header>
+        </header>
 
-      {/* Main Workspace */}
-      <main className="flex-1 max-w-7xl mx-auto w-full p-3 sm:p-6 lg:p-8">
+        <main id="workspace-main" className="workspace-content" tabIndex={-1}>
+          <section className="page-heading">
+            <div>
+              <div className="mb-2 flex items-center gap-2">
+                <span className="heading-kicker"><ScrollText className="h-3 w-3" /> STORY WORKSPACE</span>
+                <span className="h-px w-8 bg-amber-200/25" />
+                <span className="text-[10px] tracking-wide text-stone-600">{project.genre}</span>
+              </div>
+              <h2 className="font-serif text-2xl font-semibold tracking-wide text-stone-100 sm:text-[28px]">{pageDetails[currentTab].title}</h2>
+              <p className="mt-1.5 text-xs text-stone-500">{pageDetails[currentTab].subtitle}</p>
+            </div>
+            <div className="heading-stats">
+              <div className="stat-block"><span>总字数</span><strong>{totalWords.toLocaleString()}</strong></div>
+              <span className="stat-divider" />
+              <div className="stat-block"><span>角色</span><strong>{project.characters.length}</strong></div>
+              <span className="stat-divider" />
+              <div className="stat-block"><span>地点</span><strong>{project.locations.length}</strong></div>
+            </div>
+          </section>
+
+        <div className={`workspace-module module-${currentTab.toLowerCase()}`}>
+        {isRestoring ? <LoadingPanel /> : restoreError ? <div className="workspace-loading flex-col px-8 text-center" role="alert"><AlertCircle className="h-7 w-7" /><h3 className="font-serif text-lg text-slate-100">继续之前，先恢复完整作品</h3><p className="max-w-md text-xs leading-7 text-slate-400">{restoreError}</p><button className="rounded-lg border border-purple-700 bg-purple-600 px-5 py-2 text-xs text-white" onClick={() => setRestoreAttempt(attempt => attempt + 1)}>重新读取存档</button><button className="text-xs underline underline-offset-4" onClick={() => importRef.current?.click()}>从备份还原</button></div> : <Suspense fallback={<LoadingPanel />}>
         {currentTab === 'AUTHOR_DESK' && (
           <AuthorDeskEditor
+            key={project.id}
             project={project}
             onUpdateProject={handleUpdateProject}
             onOpenDocumentLibrary={() => setShowDocLibrary(true)}
@@ -312,8 +423,12 @@ export default function App() {
         {currentTab === 'READER' && (
           <ReaderView project={project} />
         )}
-      </main>
+        </Suspense>}
+        </div>
+        </main>
+      </div>
 
+      <Suspense fallback={<div className="dialog-loading" role="status"><RefreshCw className="h-5 w-5 animate-spin" />正在打开工具…</div>}>
       {/* Reference Material & Document Library Modal */}
       {showDocLibrary && (
         <DocumentLibraryModal
@@ -326,7 +441,9 @@ export default function App() {
                 idx === 0 ? { ...ch, content: ch.content + '\n\n' + snippet } : ch
               );
               handleUpdateProject({ ...project, chapters: updated });
-              alert('已将引用摘录追加至正文末尾！');
+              setNotice({ message: '已将引用摘录追加至第一章正文末尾。' });
+            } else {
+              setNotice({ message: '请先创建章节，再插入摘录。', error: true });
             }
           }}
           onConvertToLorebook={handleAddLorebookEntry}
@@ -352,7 +469,9 @@ export default function App() {
                 idx === 0 ? { ...ch, outline: ch.outline ? `${ch.outline}\n${twistText}` : twistText } : ch
               );
               handleUpdateProject({ ...project, chapters: updated });
-              alert('已成功将神谕变故注录入大纲计划中！');
+              setNotice({ message: '已将神谕变故加入第一章大纲。' });
+            } else {
+              setNotice({ message: '请先创建章节，再应用神谕。', error: true });
             }
           }}
         />
@@ -369,12 +488,11 @@ export default function App() {
 
       {/* Consistency Audit Modal */}
       {showAuditModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-6 space-y-4 text-xs">
+        <Dialog onClose={() => setShowAuditModal(false)} titleId="audit-title" className="fixed inset-0 flex items-center justify-center p-4" panelClassName="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-6 space-y-4 text-xs">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <ShieldCheck className="w-5 h-5 text-purple-400" />
-                <h3 className="text-sm font-bold text-white">世界因果律与时空穿帮审计报告</h3>
+                <h3 id="audit-title" className="text-sm font-bold text-white">世界因果审计</h3>
               </div>
               <button 
                 onClick={() => setShowAuditModal(false)}
@@ -389,8 +507,11 @@ export default function App() {
                 <RefreshCw className="w-6 h-6 text-purple-400 animate-spin" />
                 <span>正在扫描地理移动连续性、死者状态与认知泄露...</span>
               </div>
+            ) : auditError ? (
+              <div className="rounded-xl border border-red-800/60 bg-red-950/30 p-5 text-red-200" role="alert">{auditError}<button onClick={handleRunAudit} className="mt-3 block rounded-lg bg-slate-800 px-3 py-2 text-slate-100">重新审计</button></div>
             ) : (
               <div className="space-y-3 max-h-[400px] overflow-y-auto pr-1">
+                {auditIssues.length === 0 && <p className="py-8 text-center text-slate-400">未发现需要处理的因果问题。</p>}
                 {auditIssues.map(issue => (
                   <div
                     key={issue.id}
@@ -414,14 +535,17 @@ export default function App() {
                 ))}
               </div>
             )}
-          </div>
-        </div>
+        </Dialog>
       )}
 
       {/* About & System Architecture / Deployment Modal */}
       {showAboutModal && (
         <AboutSystemModal onClose={() => setShowAboutModal(false)} />
       )}
+      </Suspense>
+      {notice && <div className={`workspace-toast ${notice.error ? 'is-error' : ''}`} role={notice.error ? 'alert' : 'status'}>
+        {notice.error ? <AlertCircle className="h-4 w-4" /> : <Check className="h-4 w-4" />}<span>{notice.message}</span><button onClick={() => setNotice(null)} aria-label="关闭提示"><X className="h-4 w-4" /></button>
+      </div>}
     </div>
   );
 }

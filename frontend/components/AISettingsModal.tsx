@@ -1,9 +1,9 @@
+import { Dialog } from './Dialog';
 import React, { useState } from 'react';
 import { ProjectData, AIProviderConfig, AIProviderType, AIPresetType } from '../types';
 import { AIProviderService, ProviderHealthResult } from '../services/aiProviderService';
-import { storageService } from '../services/storageService';
-import { 
-  X, Cpu, Server, Sparkles, CheckCircle2, AlertCircle, RefreshCw, 
+import {
+  X, Cpu, Server, Sparkles, CheckCircle2, AlertCircle, RefreshCw,
   Settings2, Shield, Check, Sliders, FileText, Zap, BookOpen
 } from 'lucide-react';
 
@@ -18,6 +18,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
   onUpdateProject,
   onClose,
 }) => {
+  const dialogTitleId = React.useId();
   const [config, setConfig] = useState<AIProviderConfig>(project.aiConfig);
   const [activeTab, setActiveTab] = useState<'PROVIDER' | 'SAMPLING' | 'AUTHORS_NOTE' | 'PRESETS'>('PROVIDER');
   const [testingProvider, setTestingProvider] = useState<AIProviderType | null>(null);
@@ -26,7 +27,6 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
   const handleSave = () => {
     const updated = { ...project, aiConfig: config };
     onUpdateProject(updated);
-    storageService.saveProject(updated);
     onClose();
   };
 
@@ -141,19 +141,18 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 space-y-6 text-slate-200">
+    <Dialog onClose={onClose} titleId={dialogTitleId} className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" panelClassName="bg-slate-900 border border-slate-800 rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 space-y-6 text-slate-200">
         <div className="flex items-center justify-between border-b border-slate-800 pb-4">
           <div className="flex items-center gap-2">
             <Settings2 className="w-5 h-5 text-purple-400" />
             <div>
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                AI 推理引擎与 SillyTavern 高级调优控制台
+              <h3 id={dialogTitleId} className="text-base font-bold text-white flex flex-wrap items-center gap-2">
+                AI 写作设置
               </h3>
-              <p className="text-xs text-slate-400">参考酒馆架构：支持重复惩罚、动态采样温度、作者附注 (Author's Note) 与预设一键切换</p>
+              <p className="text-xs text-slate-400">连接模型，调整生成风格，保存常用写作偏好。</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1 hover:bg-slate-800 rounded-lg transition">
+          <button onClick={onClose} aria-label="关闭对话框" className="shrink-0 p-1 hover:bg-slate-800 rounded-lg transition">
             <X className="w-5 h-5 text-slate-400" />
           </button>
         </div>
@@ -176,7 +175,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
             }`}
           >
             <Sliders className="w-3.5 h-3.5" />
-            酒馆级采样器 (Sampling)
+            生成参数
           </button>
           <button
             onClick={() => setActiveTab('AUTHORS_NOTE')}
@@ -234,7 +233,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                     </span>
                     {config.activeProvider === 'gemini' && <Check className="w-3.5 h-3.5 text-purple-400" />}
                   </div>
-                  <p className="text-[11px] text-slate-400">原生 SDK 驱动，超长上下文与深层文学理解</p>
+                  <p className="text-[11px] text-slate-400">连接 Gemini，用于起草、续写与润色</p>
                 </button>
 
                 <button
@@ -252,7 +251,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                     </span>
                     {config.activeProvider === 'ollama' && <Check className="w-3.5 h-3.5 text-emerald-400" />}
                   </div>
-                  <p className="text-[11px] text-slate-400">Oracle ARM 4核/24G 私人离线推理 (Qwen/Llama)</p>
+                  <p className="text-[11px] text-slate-400">连接本地运行的 Ollama 模型</p>
                 </button>
 
                 <button
@@ -290,7 +289,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                   </button>
                 </div>
                 <p className="text-slate-400 text-[11px]">
-                  预置使用最新 `gemini-2.5-flash` 模型，自动加载平台密钥。无需手动配置 API Key。
+                  使用 Gemini 模型；连接测试可确认当前环境中的模型与密钥是否可用。
                 </p>
               </div>
             )}
@@ -311,7 +310,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="text-[11px] text-slate-400 block mb-1">Base URL</label>
-                    <input
+                    <input aria-label="Ollama 服务地址"
                       type="text"
                       value={config.ollama.baseUrl}
                       onChange={e => setConfig({ ...config, ollama: { ...config.ollama, baseUrl: e.target.value } })}
@@ -320,7 +319,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                   </div>
                   <div>
                     <label className="text-[11px] text-slate-400 block mb-1">模型名称</label>
-                    <input
+                    <input aria-label="Ollama 模型名称"
                       type="text"
                       value={config.ollama.model}
                       onChange={e => setConfig({ ...config, ollama: { ...config.ollama, model: e.target.value } })}
@@ -330,7 +329,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                 </div>
                 <div>
                   <label className="text-[11px] text-slate-400 block mb-1">Context Length (num_ctx 显存窗口): {config.ollama.contextLength}</label>
-                  <input
+                  <input aria-label="Ollama 上下文窗口"
                     type="range"
                     min="2048"
                     max="32768"
@@ -364,7 +363,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="text-[11px] text-slate-400 block mb-1">API Base URL</label>
-                    <input
+                    <input aria-label="兼容接口服务地址"
                       type="text"
                       value={config.openaiCompatible.baseUrl}
                       onChange={e => setConfig({ ...config, openaiCompatible: { ...config.openaiCompatible, baseUrl: e.target.value } })}
@@ -373,7 +372,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                   </div>
                   <div>
                     <label className="text-[11px] text-slate-400 block mb-1">模型名称</label>
-                    <input
+                    <input aria-label="兼容接口模型名称"
                       type="text"
                       value={config.openaiCompatible.model}
                       onChange={e => setConfig({ ...config, openaiCompatible: { ...config.openaiCompatible, model: e.target.value } })}
@@ -382,8 +381,8 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                   </div>
                 </div>
                 <div>
-                  <label className="text-[11px] text-slate-400 block mb-1">API Key (保存在本地浏览器，不外传)</label>
-                  <input
+                  <label className="text-[11px] text-slate-400 block mb-1">API Key（保存在当前浏览器，用于连接所选服务）</label>
+                  <input aria-label="兼容接口 API Key"
                     type="password"
                     value={config.openaiCompatible.apiKey}
                     onChange={e => setConfig({ ...config, openaiCompatible: { ...config.openaiCompatible, apiKey: e.target.value } })}
@@ -401,7 +400,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
             <div className="border-b border-slate-800 pb-2">
               <h4 className="font-semibold text-white flex items-center gap-1.5">
                 <Sliders className="w-4 h-4 text-purple-400" />
-                SillyTavern 经典采样控制矩阵
+                调整生成风格
               </h4>
               <p className="text-[11px] text-slate-400 mt-0.5">针对中文长篇叙事的专用采样调节，有效抑制 AI “车轱辘话复读”与“逻辑出戏”</p>
             </div>
@@ -413,12 +412,12 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                   <span className="text-slate-300">采样温度 (Temperature): {config.sampling.temperature}</span>
                   <span className="text-slate-500 font-mono">0.1 ~ 1.5</span>
                 </div>
-                <input
+                <input aria-label="采样温度"
                   type="range"
                   min="0.1"
                   max="1.5"
                   step="0.05"
-                  value={config.sampling.temperature}
+                    value={config.sampling.temperature}
                   onChange={e => setConfig({ ...config, sampling: { ...config.sampling, temperature: parseFloat(e.target.value) } })}
                   className="w-full accent-purple-500"
                 />
@@ -432,17 +431,17 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                   </span>
                   <span className="text-slate-500 font-mono">1.0 ~ 1.4</span>
                 </div>
-                <input
+                <input aria-label="重复惩罚"
                   type="range"
                   min="1.0"
                   max="1.4"
                   step="0.02"
-                  value={config.sampling.repetitionPenalty}
+                    value={config.sampling.repetitionPenalty}
                   onChange={e => setConfig({ ...config, sampling: { ...config.sampling, repetitionPenalty: parseFloat(e.target.value) } })}
                   className="w-full accent-purple-500"
                 />
                 <span className="text-[10px] text-slate-500 block mt-0.5">
-                  SillyTavern 核心：推荐 1.15~1.20，能彻底防止本地开源小模型（如 Qwen）不断重复前文句式。
+                  可从 1.15～1.20 开始尝试，再根据重复程度与文句自然度调整。
                 </span>
               </div>
 
@@ -452,12 +451,12 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                   <span className="text-slate-300">Top-P (核采样): {config.sampling.topP}</span>
                   <span className="text-slate-500 font-mono">0.5 ~ 1.0</span>
                 </div>
-                <input
+                <input aria-label="Top-P 核采样"
                   type="range"
                   min="0.5"
                   max="1.0"
                   step="0.02"
-                  value={config.sampling.topP}
+                    value={config.sampling.topP}
                   onChange={e => setConfig({ ...config, sampling: { ...config.sampling, topP: parseFloat(e.target.value) } })}
                   className="w-full accent-purple-500"
                 />
@@ -469,12 +468,12 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                   <span className="text-slate-300">Top-K: {config.sampling.topK}</span>
                   <span className="text-slate-500 font-mono">10 ~ 100</span>
                 </div>
-                <input
+                <input aria-label="Top-K 采样"
                   type="range"
                   min="10"
                   max="100"
                   step="5"
-                  value={config.sampling.topK}
+                    value={config.sampling.topK}
                   onChange={e => setConfig({ ...config, sampling: { ...config.sampling, topK: parseInt(e.target.value) || 40 } })}
                   className="w-full accent-purple-500"
                 />
@@ -486,12 +485,12 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                   <span className="text-slate-300">频率惩罚 (Frequency Penalty): {config.sampling.frequencyPenalty}</span>
                   <span className="text-slate-500 font-mono">0.0 ~ 1.0</span>
                 </div>
-                <input
+                <input aria-label="频率惩罚"
                   type="range"
                   min="0.0"
                   max="1.0"
                   step="0.05"
-                  value={config.sampling.frequencyPenalty}
+                    value={config.sampling.frequencyPenalty}
                   onChange={e => setConfig({ ...config, sampling: { ...config.sampling, frequencyPenalty: parseFloat(e.target.value) } })}
                   className="w-full accent-purple-500"
                 />
@@ -503,12 +502,12 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                   <span className="text-slate-300">单章最大生成 Token: {config.sampling.maxTokens}</span>
                   <span className="text-slate-500 font-mono">1000 ~ 6000</span>
                 </div>
-                <input
+                <input aria-label="单章最大生成 Token"
                   type="range"
                   min="1000"
                   max="6000"
                   step="250"
-                  value={config.sampling.maxTokens}
+                    value={config.sampling.maxTokens}
                   onChange={e => setConfig({ ...config, sampling: { ...config.sampling, maxTokens: parseInt(e.target.value) || 2500 } })}
                   className="w-full accent-purple-500"
                 />
@@ -524,10 +523,10 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
               <div>
                 <h4 className="font-semibold text-white flex items-center gap-1.5">
                   <FileText className="w-4 h-4 text-purple-400" />
-                  作者附注深度注入 (SillyTavern Author's Note)
+                  作者附注
                 </h4>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  在靠近输出最底端插入最高优先级的写作提示，具有极强的提示词贴合度（Recency Effect）。
+                  为每次生成补充写作要求，例如语气、视角与人物认知边界。
                 </p>
               </div>
               <button
@@ -545,9 +544,9 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
 
             <div>
               <label className="text-slate-400 block mb-1">附注强制约束指令文本：</label>
-              <textarea
+              <textarea aria-label="作者附注内容"
                 rows={4}
-                value={config.authorsNote.content}
+                    value={config.authorsNote.content}
                 onChange={e => setConfig({
                   ...config,
                   authorsNote: { ...config.authorsNote, content: e.target.value }
@@ -558,9 +557,9 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
             </div>
 
             <div className="p-3 bg-purple-950/30 border border-purple-800/40 rounded-lg text-slate-300 text-[11px] space-y-1">
-              <div className="font-semibold text-purple-300">酒馆机制说明：</div>
+              <div className="font-semibold text-purple-300">使用提示：</div>
               <div>• 附注会自动包裹在所有世界事件之后、最终要求正文输出之前。</div>
-              <div>• 能够直接纠正模型“跑题”、“滥用修辞”、“强行大团圆”或“剧透伏笔”的行为。</div>
+              <div>• 写下明确、简短的约束，生成后仍需检查内容是否符合要求。</div>
             </div>
           </div>
         )}
@@ -573,77 +572,77 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div
+              <button type="button"
                 onClick={() => handleApplyPreset('sillytavern_literary')}
-                className="p-4 bg-slate-950/60 border border-slate-800 hover:border-purple-500 rounded-xl cursor-pointer transition space-y-2 group"
+                className="text-left p-4 bg-slate-950/60 border border-slate-800 hover:border-purple-500 rounded-xl cursor-pointer transition space-y-2 group"
               >
                 <div className="flex items-center justify-between font-semibold text-white">
                   <span className="flex items-center gap-1.5 text-purple-300">
                     <BookOpen className="w-4 h-4" />
-                    SillyTavern 纯正古典文学预设
+                    古典文学
                   </span>
                   <span className="text-[10px] bg-purple-950 text-purple-300 px-2 py-0.5 rounded border border-purple-800">
-                    推荐首选
+                    风格预设
                   </span>
                 </div>
                 <p className="text-slate-400 text-[11px] leading-relaxed">
-                  Temp 0.85, Top-P 0.92, 重复惩罚 1.18。注重动作细节、心理隐秘与微小表情描写，极具小说张力。
+                  Temp 0.85，Top-P 0.92，重复惩罚 1.18。侧重动作、心理与细节描写。
                 </p>
-              </div>
+              </button>
 
-              <div
+              <button type="button"
                 onClick={() => handleApplyPreset('ollama_arm_efficient')}
-                className="p-4 bg-slate-950/60 border border-slate-800 hover:border-emerald-500 rounded-xl cursor-pointer transition space-y-2 group"
+                className="text-left p-4 bg-slate-950/60 border border-slate-800 hover:border-emerald-500 rounded-xl cursor-pointer transition space-y-2 group"
               >
                 <div className="flex items-center justify-between font-semibold text-white">
                   <span className="flex items-center gap-1.5 text-emerald-300">
                     <Cpu className="w-4 h-4" />
-                    Ollama ARM 本地防复读预设
+                    Ollama 本地写作
                   </span>
                   <span className="text-[10px] bg-emerald-950 text-emerald-300 px-2 py-0.5 rounded border border-emerald-800">
-                    Oracle 专属
+                    本地推理
                   </span>
                 </div>
                 <p className="text-slate-400 text-[11px] leading-relaxed">
-                  Temp 0.68, 重复惩罚 1.22, 窗口 8192。针对 4核 ARM 优化，彻底消除 Qwen 7B 本地模型的反复唠叨。
+                  Temp 0.68，重复惩罚 1.22，窗口 8192。适合先以较低随机性尝试本地模型。
                 </p>
-              </div>
+              </button>
 
-              <div
+              <button type="button"
                 onClick={() => handleApplyPreset('deepseek_causality')}
-                className="p-4 bg-slate-950/60 border border-slate-800 hover:border-blue-500 rounded-xl cursor-pointer transition space-y-2 group"
+                className="text-left p-4 bg-slate-950/60 border border-slate-800 hover:border-blue-500 rounded-xl cursor-pointer transition space-y-2 group"
               >
                 <div className="flex items-center justify-between font-semibold text-white">
                   <span className="flex items-center gap-1.5 text-blue-300">
                     <Server className="w-4 h-4" />
-                    DeepSeek 因果严密逻辑预设
+                    DeepSeek 逻辑推演
                   </span>
                   <span className="text-[10px] bg-blue-950 text-blue-300 px-2 py-0.5 rounded border border-blue-800">
                     悬疑硬核
                   </span>
                 </div>
                 <p className="text-slate-400 text-[11px] leading-relaxed">
-                  Temp 0.60, Top-P 0.95。强调每一个悬疑线索的逻辑链条，绝不出戏，拒绝机械降神。
+                  Temp 0.60，Top-P 0.95。侧重线索之间的因果关系与情节一致性。
                 </p>
-              </div>
+              </button>
 
-              <div
+              <button type="button"
                 onClick={() => handleApplyPreset('gemini_epic')}
-                className="p-4 bg-slate-950/60 border border-slate-800 hover:border-purple-500 rounded-xl cursor-pointer transition space-y-2 group"
+                className="text-left p-4 bg-slate-950/60 border border-slate-800 hover:border-purple-500 rounded-xl cursor-pointer transition space-y-2 group"
               >
                 <div className="flex items-center justify-between font-semibold text-white">
                   <span className="flex items-center gap-1.5 text-purple-300">
                     <Sparkles className="w-4 h-4" />
-                    Gemini 2.5 全景史诗大长篇预设
+                    Gemini 长篇起草
                   </span>
                   <span className="text-[10px] bg-purple-950 text-purple-300 px-2 py-0.5 rounded border border-purple-800">
                     大画幅
                   </span>
                 </div>
                 <p className="text-slate-400 text-[11px] leading-relaxed">
-                  充分调动超长上下文理解能力，将全城地形、所有参与者因果自然融入数千字正文中。
+                  侧重长篇上下文中的场景、人物与事件衔接。
                 </p>
-              </div>
+              </button>
             </div>
           </div>
         )}
@@ -651,7 +650,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
         <div className="pt-4 border-t border-slate-800 flex items-center justify-between text-xs">
           <div className="text-slate-400 flex items-center gap-1.5">
             <Shield className="w-3.5 h-3.5 text-purple-400" />
-            <span>配置变动即时同步至本地持久化数据库</span>
+            <span>点击保存，将设置保存在当前浏览器中</span>
           </div>
 
           <div className="flex gap-2">
@@ -665,11 +664,10 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
               onClick={handleSave}
               className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-semibold transition"
             >
-              保存并应用全套设置
+              保存设置
             </button>
           </div>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 };

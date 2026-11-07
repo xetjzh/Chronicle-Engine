@@ -1,6 +1,7 @@
+import { Dialog } from './Dialog';
 import React, { useState } from 'react';
-import { 
-  X, Compass, Server, Cpu, Database, ShieldCheck, Terminal, 
+import {
+  X, Compass, Server, Cpu, Database, ShieldCheck, Terminal,
   Copy, Check, BookOpen, HardDrive, Layers, ArrowRight, ExternalLink, Info
 } from 'lucide-react';
 
@@ -9,6 +10,7 @@ interface AboutSystemModalProps {
 }
 
 export const AboutSystemModal: React.FC<AboutSystemModalProps> = ({ onClose }) => {
+  const dialogTitleId = React.useId();
   const [activeTab, setActiveTab] = useState<'ABOUT' | 'DEPLOY' | 'MIGRATION' | 'STORAGE' | 'MODELS'>('ABOUT');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
@@ -73,28 +75,27 @@ docker compose up -d
 docker exec -it chronicle-ollama ollama pull qwen2.5:7b-instruct-q4_K_M`;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-4xl w-full h-[88vh] flex flex-col text-slate-200 overflow-hidden shadow-2xl">
+    <Dialog onClose={onClose} titleId={dialogTitleId} className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200" panelClassName="bg-slate-900 border border-slate-800 rounded-2xl max-w-4xl w-full h-[88vh] flex flex-col text-slate-200 overflow-hidden shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-800 px-6 py-4 bg-slate-950/70">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-purple-600 via-indigo-600 to-pink-500 flex items-center justify-center shadow-md shadow-purple-500/20 ring-1 ring-white/10">
+            <div className="w-8 h-8 rounded-xl bg-purple-600 flex items-center justify-center shadow-md shadow-purple-500/20 ring-1 ring-white/10">
               <Compass className="w-4 h-4 text-white" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <h3 id={dialogTitleId} className="text-base font-bold text-white flex flex-wrap items-center gap-2">
                 关于 Chronicle Engine (编年引擎)
                 <span className="text-[10px] font-mono text-purple-300 bg-purple-950/80 px-2 py-0.5 rounded-full border border-purple-800/80">
-                  v2.0 私人运行系统
+                  创作工作台
                 </span>
               </h3>
-              <p className="text-xs text-slate-400">系统架构 · 数据主权 · 部署规范 · 迁移指南</p>
+              <p className="text-xs text-slate-400">创作方式、项目备份与运行环境说明。</p>
             </div>
           </div>
 
-          <button 
-            onClick={onClose} 
-            className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition"
+          <button
+            onClick={onClose}
+            aria-label="关闭对话框" className="shrink-0 p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition"
           >
             <X className="w-5 h-5" />
           </button>
@@ -109,7 +110,7 @@ docker exec -it chronicle-ollama ollama pull qwen2.5:7b-instruct-q4_K_M`;
             }`}
           >
             <Info className="w-3.5 h-3.5" />
-            项目定位与理念
+            开始创作
           </button>
           <button
             onClick={() => setActiveTab('DEPLOY')}
@@ -136,7 +137,7 @@ docker exec -it chronicle-ollama ollama pull qwen2.5:7b-instruct-q4_K_M`;
             }`}
           >
             <HardDrive className="w-3.5 h-3.5" />
-            数据主权与持久化
+            保存与备份
           </button>
           <button
             onClick={() => setActiveTab('MODELS')}
@@ -145,7 +146,7 @@ docker exec -it chronicle-ollama ollama pull qwen2.5:7b-instruct-q4_K_M`;
             }`}
           >
             <Cpu className="w-3.5 h-3.5" />
-            推理模型推荐
+            模型选择
           </button>
         </div>
 
@@ -157,11 +158,10 @@ docker exec -it chronicle-ollama ollama pull qwen2.5:7b-instruct-q4_K_M`;
               <div className="p-4 bg-purple-950/30 border border-purple-800/60 rounded-xl space-y-2">
                 <div className="font-semibold text-purple-300 text-sm flex items-center gap-1.5">
                   <ShieldCheck className="w-4 h-4 text-purple-400" />
-                  设计初衷：世界自行发展，文学由因果自然孕育
+                  从世界设定走向章节正文
                 </div>
                 <p className="text-slate-300 leading-relaxed">
-                  Chronicle Engine 不是一个调取语言模型套话的玩具网页，而是一套<strong>拥有确定性物理与社会法则、独立认知图谱、人物效用状态机与严格时空因果链</strong>的自主虚拟世界演进系统。
-                  角色只有在真实亲历或口耳相传后才知晓信息，世界事件沉淀为确凿正史，再由文学引擎扩写成长篇巨著。
+                  整理世界规则、人物与事件，再选择自动推演或亲自写作。你可以随时修改生成内容，并用世界书与参考文献补充创作依据。
                 </p>
               </div>
 
@@ -169,7 +169,7 @@ docker exec -it chronicle-ollama ollama pull qwen2.5:7b-instruct-q4_K_M`;
                 <div className="p-4 bg-slate-950/60 border border-slate-800 rounded-xl space-y-1.5">
                   <div className="font-bold text-white flex items-center gap-1.5 text-xs">
                     <BookOpen className="w-3.5 h-3.5 text-purple-400" />
-                    三大协同创作模式
+                    选择适合此刻的创作方式
                   </div>
                   <p className="text-slate-400">
                     <strong>模式 A (全自动演化)</strong>：多卷大纲与章节自动推演；<br />
@@ -181,18 +181,18 @@ docker exec -it chronicle-ollama ollama pull qwen2.5:7b-instruct-q4_K_M`;
                 <div className="p-4 bg-slate-950/60 border border-slate-800 rounded-xl space-y-1.5">
                   <div className="font-bold text-white flex items-center gap-1.5 text-xs">
                     <HardDrive className="w-3.5 h-3.5 text-emerald-400" />
-                    纯私人、单人、零外部追踪
+                    保存你的创作资料
                   </div>
                   <p className="text-slate-400">
-                    系统专为私人创作与个人阅读定制。不包含商业化充值、社交信息流、外部数据遥测。所有数据保存在本地浏览器 IndexedDB 数据库或您自己的私人服务器中，永久归作者所有。
+                    项目保存在当前浏览器中。请定期导出 JSON 备份；切换设备或浏览器前，先确认备份文件能够恢复。使用 AI 时，相关上下文会发送给选定的模型服务。
                   </p>
                 </div>
               </div>
 
               <div className="p-4 bg-slate-950/40 border border-slate-800 rounded-xl space-y-2 text-slate-400">
-                <div className="text-white font-semibold">为什么模拟系统不依赖每次 NPC 行动都调用 LLM？</div>
+                <div className="text-white font-semibold">让设定参与故事推进</div>
                 <p>
-                  如果每一个行人在每一秒钟都请求大模型，既缓慢又昂贵。Chronicle Engine 采用确定性规则引擎、地理图谱与效用状态机承担常规模拟，仅在需要复杂推理与长篇文学描写时才调用 AI，保证在 4 核低功耗 ARM 上依然能如行云流水般长期自驱演化。
+                  在世界模拟中观察人物行动与事件变化，挑选值得展开的冲突，再进入写作。生成结果仍需要作者检查与取舍。
                 </p>
               </div>
             </div>
@@ -259,10 +259,10 @@ docker exec -it chronicle-ollama ollama pull qwen2.5:7b-instruct-q4_K_M`;
               <div className="p-4 bg-purple-950/20 border border-purple-800/50 rounded-xl space-y-2">
                 <div className="font-semibold text-purple-300 flex items-center gap-2">
                   <ArrowRight className="w-4 h-4" />
-                  Google Cloud 临时开发赠金环境向终身服务器迁移规范
+                  迁移到新的运行环境
                 </div>
                 <p className="text-slate-300 leading-relaxed">
-                  针对前 18 天使用 Google Cloud Compute Engine 免费赠金进行测试的创作者，系统设计遵循<strong>零专有云绑定原则</strong>，确保赠金到期后无需支付任何费用即可继续创作。
+                  先备份，再在新环境中恢复和检查。确认资料完整后，处理旧环境中的资源。
                 </p>
               </div>
 
@@ -290,10 +290,10 @@ docker exec -it chronicle-ollama ollama pull qwen2.5:7b-instruct-q4_K_M`;
                 <div className="p-3.5 bg-slate-950/60 border border-slate-800 rounded-xl space-y-1">
                   <div className="font-bold text-white flex items-center gap-2">
                     <span className="w-5 h-5 rounded-full bg-purple-600 text-white flex items-center justify-center text-[10px]">3</span>
-                    在终身服务器一键恢复
+                    在新环境恢复项目
                   </div>
                   <p className="text-slate-400 pl-7">
-                    在自己的 Oracle ARM 或本地服务器打开本系统网页，点击“还原”选择此前下载的 JSON，所有状态即刻在本地数据库无损重现，继续不间断进行 3000 章创作。
+                    在新环境打开工作台，导入此前下载的 JSON。检查世界设定、人物与章节后，继续创作。
                   </p>
                 </div>
               </div>
@@ -306,25 +306,25 @@ docker exec -it chronicle-ollama ollama pull qwen2.5:7b-instruct-q4_K_M`;
               <div className="p-4 bg-slate-950/70 border border-slate-800 rounded-xl space-y-2">
                 <div className="font-semibold text-white flex items-center gap-2">
                   <HardDrive className="w-4 h-4 text-purple-400" />
-                  IndexedDB 工业级浏览器持久化机制
+                  项目存储在当前浏览器
                 </div>
                 <p className="text-slate-400 leading-relaxed">
-                  市面上常见的网页工具因依赖 5MB 的 localStorage，常在写满 10~20 章后崩溃报错。Chronicle Engine 实现了底层的 <strong>IndexedDB 专用数据库管道</strong>，支持千兆字节（GB）级别的数据吞吐，即使全本突破 3000 章、1200 万字，也能安全稳定运行。
+                  工作台使用浏览器 IndexedDB 保存项目与章节。浏览器存储空间、隐私模式以及清理站点数据都会影响资料保留，请保留独立备份。
                 </p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-slate-300">
                 <div className="p-3 bg-slate-950/40 border border-slate-800 rounded-xl">
-                  <div className="font-semibold text-white mb-1">分块索引分页</div>
+                  <div className="font-semibold text-white mb-1">按需读取章节</div>
                   <div className="text-slate-400">
-                    即使拥有 3000 章节，系统在目录加载时仅提取元数据与分卷切片，杜绝内存膨胀与界面卡顿。
+                    章节正文可按需读取，便于浏览长篇目录和继续写作。
                   </div>
                 </div>
 
                 <div className="p-3 bg-slate-950/40 border border-slate-800 rounded-xl">
-                  <div className="font-semibold text-white mb-1">双轨自动存档</div>
+                  <div className="font-semibold text-white mb-1">确认保存与导出备份</div>
                   <div className="text-slate-400">
-                    每一次键盘敲击停止后，系统在 600 毫秒内自动将修改提交至 IndexedDB，避免意外刷新丢失文稿。
+                    留意编辑区的保存状态。完成重要修改后，导出一份项目备份，便于迁移与恢复。
                   </div>
                 </div>
               </div>
@@ -337,10 +337,10 @@ docker exec -it chronicle-ollama ollama pull qwen2.5:7b-instruct-q4_K_M`;
               <div className="p-4 bg-slate-950/70 border border-slate-800 rounded-xl space-y-2">
                 <div className="font-semibold text-white flex items-center gap-2">
                   <Cpu className="w-4 h-4 text-emerald-400" />
-                  针对 24GB ARM 内存的文学与推理模型适配建议
+                  按创作任务选择模型
                 </div>
                 <p className="text-slate-400">
-                  根据实践经验，Oracle ARM 4核处理器配合 24GB 内存无需独立 GPU 即可流畅运行 7B~8B 量化模型：
+                  以下为可配置的模型示例。可用性、速度与费用取决于模型服务和设备，请通过 AI 设置中的连接测试确认。
                 </p>
               </div>
 
@@ -348,30 +348,30 @@ docker exec -it chronicle-ollama ollama pull qwen2.5:7b-instruct-q4_K_M`;
                 <div className="p-3 bg-slate-950/60 border border-slate-800 rounded-xl">
                   <div className="flex items-center justify-between text-white font-semibold">
                     <span>Qwen2.5 7B Instruct (Q4_K_M)</span>
-                    <span className="text-[10px] text-emerald-400 font-mono">强烈推荐</span>
+                    <span className="text-[10px] text-emerald-400 font-mono">本地模型示例</span>
                   </div>
                   <div className="text-slate-400 mt-1">
-                    中文文学修辞和长句掌握极为自然，显存占用仅约 4.8GB，在 24GB 内存中留有极充裕的缓存空间。
+                    可通过 Ollama 尝试中文起草与润色，按设备内存选择量化版本和上下文窗口。
                   </div>
                 </div>
 
                 <div className="p-3 bg-slate-950/60 border border-slate-800 rounded-xl">
                   <div className="flex items-center justify-between text-white font-semibold">
                     <span>DeepSeek-R1 Distill Qwen 7B / 8B</span>
-                    <span className="text-[10px] text-blue-400 font-mono">悬疑因果利器</span>
+                    <span className="text-[10px] text-blue-400 font-mono">推理模型示例</span>
                   </div>
                   <div className="text-slate-400 mt-1">
-                    针对复杂历史事件、伏笔回收和一致性审查表现出色的逻辑链条，不易产生自相矛盾的剧情。
+                    可用于探索事件因果、检查伏笔与设定一致性，最终内容由作者审核。
                   </div>
                 </div>
 
                 <div className="p-3 bg-slate-950/60 border border-slate-800 rounded-xl">
                   <div className="flex items-center justify-between text-white font-semibold">
                     <span>Google Gemini 2.5 Flash (外部 API)</span>
-                    <span className="text-[10px] text-purple-400 font-mono">多幕长篇极速</span>
+                    <span className="text-[10px] text-purple-400 font-mono">外部服务示例</span>
                   </div>
                   <div className="text-slate-400 mt-1">
-                    在有网络时作为首选文学起草引擎，支持长达上万 Token 的四幕接力扩写，单章极速产出 4000+ 汉字。
+                    在 AI 设置中配置可用模型，用于起草、续写或润色。模型权限与用量以服务提供方为准。
                   </div>
                 </div>
               </div>
@@ -381,7 +381,7 @@ docker exec -it chronicle-ollama ollama pull qwen2.5:7b-instruct-q4_K_M`;
 
         {/* Footer */}
         <div className="px-6 py-3 border-t border-slate-800 bg-slate-950/70 flex items-center justify-between text-xs text-slate-400">
-          <span>数据仅保存在您的当前设备与私有容器中</span>
+          <span>定期导出备份，保存重要创作进展。</span>
           <button
             onClick={onClose}
             className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-semibold transition"
@@ -389,7 +389,6 @@ docker exec -it chronicle-ollama ollama pull qwen2.5:7b-instruct-q4_K_M`;
             返回创作工作台
           </button>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 };

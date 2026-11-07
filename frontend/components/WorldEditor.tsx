@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { ProjectData, WorldRule, LocationNode, Faction, ForeshadowingClue } from '../types';
-import { storageService } from '../services/storageService';
 import { 
   Compass, MapPin, Flag, HelpCircle, Plus, Trash2, Edit3, 
   Sparkles, CheckCircle, Shield, AlertCircle
@@ -43,7 +42,6 @@ export const WorldEditor: React.FC<WorldEditorProps> = ({
     };
     const updated = { ...project, rules: [...project.rules, rule] };
     onUpdateProject(updated);
-    storageService.saveProject(updated);
     setNewRuleText('');
     setNewRuleConsequence('');
   };
@@ -51,7 +49,6 @@ export const WorldEditor: React.FC<WorldEditorProps> = ({
   const handleDeleteRule = (id: string) => {
     const updated = { ...project, rules: project.rules.filter(r => r.id !== id) };
     onUpdateProject(updated);
-    storageService.saveProject(updated);
   };
 
   const handleAddLocation = () => {
@@ -66,7 +63,6 @@ export const WorldEditor: React.FC<WorldEditorProps> = ({
     };
     const updated = { ...project, locations: [...project.locations, loc] };
     onUpdateProject(updated);
-    storageService.saveProject(updated);
     setNewLocName('');
     setNewLocDesc('');
     setNewLocClimate('');
@@ -75,7 +71,6 @@ export const WorldEditor: React.FC<WorldEditorProps> = ({
   const handleDeleteLocation = (id: string) => {
     const updated = { ...project, locations: project.locations.filter(l => l.id !== id) };
     onUpdateProject(updated);
-    storageService.saveProject(updated);
   };
 
   const handleAddForeshadowing = () => {
@@ -91,7 +86,6 @@ export const WorldEditor: React.FC<WorldEditorProps> = ({
     };
     const updated = { ...project, foreshadowing: [...project.foreshadowing, clue] };
     onUpdateProject(updated);
-    storageService.saveProject(updated);
     setNewClueTitle('');
     setNewClueResolution('');
     setNewClueNotes('');
@@ -103,7 +97,6 @@ export const WorldEditor: React.FC<WorldEditorProps> = ({
     );
     const updated = { ...project, foreshadowing: updatedClues };
     onUpdateProject(updated);
-    storageService.saveProject(updated);
   };
 
   return (
@@ -112,7 +105,7 @@ export const WorldEditor: React.FC<WorldEditorProps> = ({
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-3">
         <div className="flex items-center gap-2">
           <Compass className="w-5 h-5 text-purple-400" />
-          <h2 className="text-lg font-serif font-bold text-white">世界规则与地缘宏观编辑器</h2>
+          <h2 className="text-lg font-serif font-bold text-white">构筑故事发生的世界</h2>
         </div>
 
         <div className="flex items-center gap-1.5 bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs">
@@ -122,7 +115,7 @@ export const WorldEditor: React.FC<WorldEditorProps> = ({
               activeSubTab === 'RULES' ? 'bg-purple-600 text-white font-medium' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            世界硬性法则 ({project.rules.length})
+            世界法则 ({project.rules.length})
           </button>
           <button
             onClick={() => setActiveSubTab('LOCATIONS')}
@@ -146,7 +139,7 @@ export const WorldEditor: React.FC<WorldEditorProps> = ({
               activeSubTab === 'FORESHADOWING' ? 'bg-purple-600 text-white font-medium' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            伏笔追踪数据库 ({project.foreshadowing.length})
+            伏笔追踪 ({project.foreshadowing.length})
           </button>
         </div>
       </div>

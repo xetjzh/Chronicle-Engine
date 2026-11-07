@@ -1,9 +1,12 @@
 import { ProjectData, Chapter } from '../types';
 
 const DB_NAME = 'ChronicleEngineDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_PROJECT = 'projects';
-const STORE_CHAPTERS = 'chapters';
+const STORE_SETTINGS = 'settings';
+const ACTIVE_PROJECT = 'active-project';
+
+interface ActiveProjectRecord { id: string; projectId: string; revision: number }
 
 export class IndexedDbService {
   private static dbPromise: Promise<IDBDatabase> | null = null;
@@ -13,52 +16,71 @@ export class IndexedDbService {
 
     this.dbPromise = new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
+      let failed = false;
 
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
         if (!db.objectStoreNames.contains(STORE_PROJECT)) {
           db.createObjectStore(STORE_PROJECT, { keyPath: 'id' });
         }
-        if (!db.objectStoreNames.contains(STORE_CHAPTERS)) {
-          const chapStore = db.createObjectStore(STORE_CHAPTERS, { keyPath: 'id' });
-          chapStore.createIndex('by_chapter_num', 'chapterNumber', { unique: false });
+        if (!db.objectStoreNames.contains(STORE_SETTINGS)) {
+          db.createObjectStore(STORE_SETTINGS, { keyPath: 'id' });
         }
       };
 
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const db = request.result;
+        if (failed) { db.close(); return; }
+        db.onversionchange = () => { db.close(); this.dbPromise = null; };
+        resolve(db);
+      };
+      request.onerror = () => {
+        failed = true;
+        this.dbPromise = null;
+        reject(request.error);
+      };
+      request.onblocked = () => {
+        failed = true;
+        this.dbPromise = null;
+        reject(new Error('请关闭其它编年引擎窗口后重试读取存档。'));
+      };
     });
 
     return this.dbPromise;
   }
 
   /**
-   * Saves the entire project safely into IndexedDB.
-   * Eliminates the 5MB browser quota barrier, safely storing 3000+ chapters (20MB~100MB+).
+   * The project record already contains its full chapter list. Save it atomically
+   * as the authority for chapter membership, including an intentionally empty list.
    */
   public static async saveProjectData(project: ProjectData): Promise<void> {
+    const db = await this.getDB();
+    const tx = db.transaction([STORE_PROJECT, STORE_SETTINGS], 'readwrite');
+    return new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error('IndexedDB write failed'));
+      tx.onabort = () => reject(tx.error || new Error('IndexedDB write aborted'));
+      tx.objectStore(STORE_PROJECT).put(project);
+      // Commit the activity pointer with the manuscript, even if localStorage
+      // is full or blocked. A successful save must remain discoverable.
+      tx.objectStore(STORE_SETTINGS).put({
+        id: ACTIVE_PROJECT,
+        projectId: project.id,
+        revision: (project as ProjectData & { __storageRevision?: number }).__storageRevision || Date.now(),
+      } satisfies ActiveProjectRecord);
+    });
+  }
+
+  public static async loadActiveProject(): Promise<ActiveProjectRecord | null> {
     try {
       const db = await this.getDB();
-      const tx = db.transaction([STORE_PROJECT, STORE_CHAPTERS], 'readwrite');
-      
-      const projectStore = tx.objectStore(STORE_PROJECT);
-      const chapterStore = tx.objectStore(STORE_CHAPTERS);
-
-      // Save base project metadata (excluding massive text arrays to optimize index speed)
-      const projectMeta = { ...project };
-      projectStore.put(projectMeta);
-
-      // Save all chapters into the dedicated store
-      project.chapters.forEach(ch => {
-        chapterStore.put(ch);
+      const request = db.transaction(STORE_SETTINGS, 'readonly').objectStore(STORE_SETTINGS).get(ACTIVE_PROJECT);
+      return await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result || null);
+        request.onerror = () => reject(request.error);
       });
-
-      return new Promise((resolve, reject) => {
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-      });
-    } catch (e) {
-      console.error('IndexedDB save failed, falling back to localStorage if possible', e);
+    } catch {
+      return null;
     }
   }
 
@@ -68,34 +90,12 @@ export class IndexedDbService {
   public static async loadProjectData(projectId: string): Promise<ProjectData | null> {
     try {
       const db = await this.getDB();
-      const tx = db.transaction([STORE_PROJECT, STORE_CHAPTERS], 'readonly');
-
-      const projectStore = tx.objectStore(STORE_PROJECT);
-      const chapterStore = tx.objectStore(STORE_CHAPTERS);
-
-      const projectReq = projectStore.get(projectId);
-
-      const projectMeta = await new Promise<ProjectData | null>((resolve) => {
+      const tx = db.transaction(STORE_PROJECT, 'readonly');
+      const projectReq = tx.objectStore(STORE_PROJECT).get(projectId);
+      return await new Promise<ProjectData | null>((resolve, reject) => {
         projectReq.onsuccess = () => resolve(projectReq.result || null);
-        projectReq.onerror = () => resolve(null);
+        projectReq.onerror = () => reject(projectReq.error);
       });
-
-      if (!projectMeta) return null;
-
-      // Fetch all chapters
-      const chapReq = chapterStore.getAll();
-      const chapters = await new Promise<Chapter[]>((resolve) => {
-        chapReq.onsuccess = () => resolve(chapReq.result || []);
-        chapReq.onerror = () => resolve([]);
-      });
-
-      if (chapters.length > 0) {
-        // Sort chapters sequentially
-        chapters.sort((a, b) => a.chapterNumber - b.chapterNumber);
-        projectMeta.chapters = chapters;
-      }
-
-      return projectMeta;
     } catch (e) {
       console.warn('IndexedDB load failed', e);
       return null;
@@ -103,21 +103,12 @@ export class IndexedDbService {
   }
 
   /**
-   * Streams or retrieves a specific chapter page window (e.g. chapters 100 to 150)
-   * Prevents UI memory bloat when managing 3000 chapters.
+   * Retrieves a chapter-number window from one saved project. The project ID is
+   * explicit so legacy chapter-store entries cannot leak across projects.
    */
-  public static async getChapterSlice(startNum: number, count: number): Promise<Chapter[]> {
-    const db = await this.getDB();
-    const tx = db.transaction(STORE_CHAPTERS, 'readonly');
-    const store = tx.objectStore(STORE_CHAPTERS);
-    const index = store.index('by_chapter_num');
-
-    const range = IDBKeyRange.bound(startNum, startNum + count - 1);
-    const req = index.getAll(range);
-
-    return new Promise((resolve) => {
-      req.onsuccess = () => resolve(req.result || []);
-      req.onerror = () => resolve([]);
-    });
+  public static async getChapterSlice(startNum: number, count: number, projectId: string): Promise<Chapter[]> {
+    if (count <= 0) return [];
+    const project = await this.loadProjectData(projectId);
+    return (project?.chapters || []).filter(ch => ch.chapterNumber >= startNum && ch.chapterNumber < startNum + count);
   }
 }

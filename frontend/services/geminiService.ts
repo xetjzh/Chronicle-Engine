@@ -1,12 +1,13 @@
-import { ProjectData, Chapter, ConsistencyIssue, WorldEvent, Character } from '../types';
+import type { ProjectData, ConsistencyIssue, WorldEvent } from '../types';
 import { AIProviderService } from './aiProviderService';
 import { LorebookService } from './lorebookService';
-import { ChapterExpansionEngine, ExpansionProgressCallback } from './chapterExpansionEngine';
+import { ChapterExpansionEngine } from './chapterExpansionEngine';
+import type { ExpansionProgressCallback } from './chapterExpansionEngine';
 
 export class GeminiService {
   /**
-   * Generates a full literary novel chapter guaranteed to exceed 4000+ words
-   * through the 4-Act Relay pipeline.
+   * Generates a literary chapter through the four-act pipeline.
+   * Failed model requests remain failures so callers can preserve the draft.
    */
   public static async generateChapter(params: {
     project: ProjectData;
@@ -28,28 +29,23 @@ export class GeminiService {
     ];
     const { activatedKeys } = LorebookService.scanAndActivate(project.lorebook || [], scanContexts);
 
-    try {
-      const expanded = await ChapterExpansionEngine.generateDeepChapter({
-        project,
-        volumeNumber,
-        chapterNumber,
-        povCharacterId,
-        events,
-        userConstraint,
-        onProgress,
-      });
+    const expanded = await ChapterExpansionEngine.generateDeepChapter({
+      project,
+      volumeNumber,
+      chapterNumber,
+      povCharacterId,
+      events,
+      userConstraint,
+      onProgress,
+    });
+    if (!expanded.content?.trim()) throw new Error('章节生成返回的正文为空，请重试。');
 
-      return {
-        title: expanded.title,
-        outline: expanded.outline,
-        content: expanded.content,
-        activatedLorebookKeys: activatedKeys,
-      };
-    } catch (err: any) {
-      console.warn('AI 4幕扩写异常，启用高密度确定性长篇生成备用方案', err);
-      const fallback = this.generateFallbackChapter(params);
-      return { ...fallback, activatedLorebookKeys: activatedKeys };
-    }
+    return {
+      title: expanded.title,
+      outline: expanded.outline,
+      content: expanded.content,
+      activatedLorebookKeys: activatedKeys,
+    };
   }
 
   /**
@@ -96,9 +92,8 @@ export class GeminiService {
     });
 
     // 2. AI Semantic Consistency Audit
-    try {
-      const recentChapters = project.chapters.slice(-2).map(c => `《${c.title}》：\n${c.content.slice(0, 500)}...`).join('\n\n');
-      const auditPrompt = `请作为小说架构总编辑，审计以下世界近期章节与设定的一致性：
+    const recentChapters = project.chapters.slice(-2).map(c => `《${c.title}》：\n${c.content.slice(0, 500)}...`).join('\n\n');
+    const auditPrompt = `请作为小说架构总编辑，审计以下世界近期章节与设定的一致性：
 世界规则：${JSON.stringify(project.rules.map(r => r.rule))}
 人物近期表现：${JSON.stringify(project.characters.map(c => ({ name: c.name, mood: c.currentMood, goal: c.currentGoal })))}
 近期章节摘录：
@@ -107,24 +102,22 @@ ${recentChapters}
 请列出是否存在：1.角色性格断裂(OOC) 2.世界规则冲突 3.未交代便知晓秘密的认知穿帮。
 若无严重问题，请回复"ALL_CONSISTENT"；若有，请简要列出1~2条条目。`;
 
-      const text = await AIProviderService.generateText(project.aiConfig, {
-        prompt: auditPrompt,
-        thinkingBudget: 0,
-        overrideSampling: { temperature: 0.2 },
+    const response = await AIProviderService.generateText(project.aiConfig, {
+      prompt: auditPrompt,
+      thinkingBudget: 0,
+      overrideSampling: { temperature: 0.2 },
+    });
+    const text = response.trim();
+    if (text !== 'ALL_CONSISTENT') {
+      if (text.length <= 20) throw new Error('一致性审计返回内容不完整，请重试。');
+      issues.push({
+        id: `iss_ai_${Date.now()}`,
+        severity: 'warning',
+        title: `AI 深度文学与逻辑审计建议 (${project.aiConfig.activeProvider})`,
+        description: text.slice(0, 300),
+        suspectedEntities: ['主线章节剧情'],
+        suggestedFix: '参考审计提示微调章节中的人物措辞与反应。'
       });
-
-      if (!text.includes('ALL_CONSISTENT') && text.length > 20) {
-        issues.push({
-          id: `iss_ai_${Date.now()}`,
-          severity: 'warning',
-          title: `AI 深度文学与逻辑审计建议 (${project.aiConfig.activeProvider})`,
-          description: text.slice(0, 300),
-          suspectedEntities: ['主线章节剧情'],
-          suggestedFix: '参考审计提示微调章节中的人物措辞与反应。'
-        });
-      }
-    } catch (e) {
-      // Deterministic checks completed
     }
 
     if (issues.length === 0) {
@@ -132,7 +125,7 @@ ${recentChapters}
         id: 'iss_ok',
         severity: 'suggestion',
         title: '世界因果网络运行平稳',
-        description: '未检测到瞬移、死者复生或明显的认知泄露悖论，世界状态严丝合缝。',
+        description: '本次规则检查与 AI 审计未发现明显冲突，可结合全文继续复核。',
         suspectedEntities: [],
         suggestedFix: '可以继续推进模拟时间或生成下一章节。'
       });
@@ -148,8 +141,7 @@ ${recentChapters}
     project: ProjectData,
     directionPrompt: string
   ): Promise<string[]> {
-    try {
-      const prompt = `当前作品：《${project.title}》
+    const prompt = `当前作品：《${project.title}》
 世界当前时间：${project.currentSimulationTime}
 当前主要人物分布：${project.characters.map(c => `${c.name}在${c.currentLocationId}(心境:${c.currentMood})`).join('、')}
 用户提出的剧情意图：“${directionPrompt}”
@@ -161,37 +153,12 @@ ${recentChapters}
 
 直接输出3条，用1. 2. 3. 分段。`;
 
-      const text = await AIProviderService.generateText(project.aiConfig, {
-        prompt,
-        overrideSampling: { temperature: 0.7 },
-      });
-
-      const lines = text.split('\n').filter(line => /^\d+\./.test(line.trim()));
-      return lines.length > 0 ? lines : [text];
-    } catch (e) {
-      return [
-        `1. 让裴子期在炉火旁故意打翻药囊，借捡拾散药之机窥测罗无忌佩刀下的官印文书。`,
-        `2. 严素娘以借热水为由支开堂倌，在后厨与暗线传递今夜鬼市水箱暗语。`,
-        `3. 暴风雪将客栈门板吹裂一角，城门鼓声异响，全城提前进入全面宵禁。`
-      ];
-    }
-  }
-
-  private static generateFallbackChapter(params: any) {
-    const { chapterNumber, events, povCharacterId, project } = params;
-    const pov = project.characters.find((c: Character) => c.id === povCharacterId) || project.characters[0];
-    const eventSummary = events.map((e: WorldEvent) => e.description).join('；');
-
-    return {
-      title: `第${chapterNumber}章 宿命沉雨暗潮生`,
-      outline: `围绕事件【${events[0]?.title || '寒夜对峙'}】展开，视点人物${pov.name}在暗流中审时度势。`,
-      content: `风雨越发暴烈，瓦当上的积水如瀑布般砸在听雨居门前的青石板上。
-
-${pov.name}微微收紧了袖口，指尖触碰到冰冷的物件，呼吸微滞。整个客栈大堂陷入了一种近乎凝固的寂静，只有老炭炉偶尔爆出一星轻响。
-
-方才发生的种种仍在心头盘旋——${eventSummary || '各方彼此审视，空气中满是未言明的猜测。'}
-
-“世道若乱，草木皆兵。”柜台后的算盘声不知何时停歇，唯有窗外呼啸的长风，穿堂而过，将烛火扯成摇摇欲坠的细线。每个人都在权衡着下一步的落点，因为在北关这座黑石城里，一步踏空，便可能沉入永不解冻的冰渊。`
-    };
+    const text = await AIProviderService.generateText(project.aiConfig, {
+      prompt,
+      overrideSampling: { temperature: 0.7 },
+    });
+    if (!text.trim()) throw new Error('创作建议返回内容为空，请重试。');
+    const lines = text.split('\n').filter(line => /^\d+\./.test(line.trim()));
+    return lines.length > 0 ? lines : [text];
   }
 }

@@ -1,3 +1,4 @@
+import { Dialog } from './Dialog';
 import React from 'react';
 import { X, Server, Cpu, Database, Terminal, ShieldCheck, Check } from 'lucide-react';
 
@@ -6,15 +7,15 @@ interface DeploymentGuideModalProps {
 }
 
 export const DeploymentGuideModal: React.FC<DeploymentGuideModalProps> = ({ onClose }) => {
+  const dialogTitleId = React.useId();
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-3xl w-full max-h-[85vh] overflow-y-auto p-6 space-y-6 text-slate-200">
+    <Dialog onClose={onClose} titleId={dialogTitleId} className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" panelClassName="bg-slate-900 border border-slate-800 rounded-2xl max-w-3xl w-full max-h-[85vh] overflow-y-auto p-6 space-y-6 text-slate-200">
         <div className="flex items-center justify-between border-b border-slate-800 pb-4">
           <div className="flex items-center gap-2">
             <Server className="w-5 h-5 text-purple-400" />
-            <h3 className="text-lg font-bold text-white">Oracle Cloud ARM64 (4核/24G) 私人长期运行部署指南</h3>
+            <h3 id={dialogTitleId} className="text-lg font-bold text-white">部署指南</h3>
           </div>
-          <button onClick={onClose} className="p-1 hover:bg-slate-800 rounded-lg transition">
+          <button onClick={onClose} aria-label="关闭对话框" className="shrink-0 p-1 hover:bg-slate-800 rounded-lg transition">
             <X className="w-5 h-5 text-slate-400" />
           </button>
         </div>
@@ -23,10 +24,10 @@ export const DeploymentGuideModal: React.FC<DeploymentGuideModalProps> = ({ onCl
           <div className="p-4 bg-purple-950/30 border border-purple-800/60 rounded-xl space-y-2">
             <div className="font-semibold text-purple-300 flex items-center gap-1.5">
               <ShieldCheck className="w-4 h-4" />
-              架构承诺：赠金到期后零依赖，永久属于个人
+              准备自己的运行环境
             </div>
             <p className="text-slate-300">
-              Chronicle Engine 采用模块化单体架构设计。本地优先运行，状态机与因果律数据库完全运行在本地容器中。支持在同一服务器中并行部署 Ollama (qwen2.5:7b-instruct-q4_K_M 或 deepseek-r1:7b) 无需外部网络。
+              可在自己的服务器上部署应用，并按需连接 Ollama 本地模型。以下为 ARM64 环境的配置示例，请按实际资源与网络条件调整。
             </p>
           </div>
 
@@ -93,7 +94,7 @@ services:
               3. 数据备份与迁移方案
             </h4>
             <p className="text-slate-400">
-              在当前 Web 控制台中点击“导出项目备份 JSON”，可一键将包含全部世界设定、人物认知、事件历史、章节正文及快照打包下载。迁移至新服务器只需在新系统网页中点击“导入备份”，即可零丢失完美恢复。
+              先导出项目 JSON 备份，在新环境中导入并检查设定、人物与章节。确认恢复完整后，再清理旧环境。
             </p>
           </div>
         </div>
@@ -106,7 +107,6 @@ services:
             我已了解
           </button>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 };

@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { ProjectData, LorebookEntry } from '../types';
 import { LorebookService } from '../services/lorebookService';
-import { storageService } from '../services/storageService';
 import { 
   BookMarked, Plus, Trash2, Edit3, Key, Sparkles, Check, 
   Search, Eye, HelpCircle, Layers, ShieldCheck
@@ -27,7 +26,6 @@ export const LorebookEditor: React.FC<LorebookEditorProps> = ({
     const updated = project.lorebook.map(e => e.id === currentEntry.id ? { ...e, ...partial } : e);
     const updatedProject = { ...project, lorebook: updated };
     onUpdateProject(updatedProject);
-    storageService.saveProject(updatedProject);
   };
 
   const handleAddNewEntry = () => {
@@ -45,7 +43,6 @@ export const LorebookEditor: React.FC<LorebookEditorProps> = ({
     };
     const updatedProject = { ...project, lorebook: [...project.lorebook, newEntry] };
     onUpdateProject(updatedProject);
-    storageService.saveProject(updatedProject);
     setSelectedEntryId(newEntry.id);
   };
 
@@ -53,7 +50,6 @@ export const LorebookEditor: React.FC<LorebookEditorProps> = ({
     const updated = project.lorebook.filter(e => e.id !== id);
     const updatedProject = { ...project, lorebook: updated };
     onUpdateProject(updatedProject);
-    storageService.saveProject(updatedProject);
     if (selectedEntryId === id) {
       setSelectedEntryId(updated[0]?.id || '');
     }
@@ -71,16 +67,16 @@ export const LorebookEditor: React.FC<LorebookEditorProps> = ({
         <div>
           <div className="flex items-center gap-2">
             <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-purple-950 text-purple-300 border border-purple-800">
-              SillyTavern 架构核心
+              故事资料
             </span>
-            <span className="text-xs text-slate-400">动态上下文剪裁机制</span>
+            <span className="text-xs text-slate-400">在需要时唤起设定</span>
           </div>
           <h2 className="text-xl font-serif font-bold text-white mt-1 flex items-center gap-2">
             <BookMarked className="w-5 h-5 text-purple-400" />
-            世界书知识库 (Lorebook / World Info)
+            让故事的每个细节有据可循
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            仅在事件或对话中出现对应关键词时，才将该设定精准注入 AI 上下文，彻底告别超长设定爆显存与遗忘。
+            收藏人物背景、地理传说与重要事实；关键词出现时，相关设定会供 AI 创作参考。
           </p>
         </div>
 
@@ -106,10 +102,12 @@ export const LorebookEditor: React.FC<LorebookEditorProps> = ({
               {project.lorebook.map(entry => {
                 const isSelected = entry.id === currentEntry?.id;
                 return (
-                  <div
+                  <button
+                    type="button"
                     key={entry.id}
                     onClick={() => setSelectedEntryId(entry.id)}
-                    className={`p-3 rounded-lg border text-xs cursor-pointer transition ${
+                    aria-pressed={isSelected}
+                    className={`block w-full text-left p-3 rounded-lg border text-xs cursor-pointer transition ${
                       isSelected 
                         ? 'bg-purple-950/40 border-purple-500 text-white shadow' 
                         : 'bg-slate-800/40 border-slate-800 text-slate-300 hover:border-slate-700'
@@ -130,7 +128,7 @@ export const LorebookEditor: React.FC<LorebookEditorProps> = ({
                     </div>
 
                     <p className="text-[11px] text-slate-400 mt-1 line-clamp-1">{entry.content}</p>
-                  </div>
+                  </button>
                 );
               })}
             </div>

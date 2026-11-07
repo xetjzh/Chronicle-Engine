@@ -1,10 +1,11 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { ProjectData, Chapter, WorldEvent, BatchPipelineStatus } from '../types';
 import { GeminiService } from '../services/geminiService';
 import { SimulationEngine } from '../services/simulationEngine';
 import { storageService } from '../services/storageService';
 import { RecursiveSummaryEngine } from '../services/recursiveSummaryEngine';
 import { ChaosOracleModal } from './ChaosOracleModal';
+import { applyNovelChapterPatch, captureNovelChapter, runNovelBatch } from './novelAsync';
 import { 
   BookOpen, Feather, Sparkles, CheckCircle2, RotateCcw, 
   Download, Plus, Edit3, MessageSquare, AlertTriangle, Layers,
@@ -58,6 +59,28 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
   const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
   const [isAskingSuggestion, setIsAskingSuggestion] = useState(false);
   const [lastActivatedLore, setLastActivatedLore] = useState<string[]>([]);
+  const [operationNotice, setOperationNotice] = useState<{ message: string; details?: string; error?: boolean } | null>(null);
+  const latestProjectRef = useRef(project);
+  const latestCallbackRef = useRef(onUpdateProject);
+  const mountedRef = useRef(true);
+  const activeAIRef = useRef({ generation: false, extraction: false, suggestions: false });
+  const batchRunRef = useRef<{ cancelled: boolean; projectId: string } | null>(null);
+  latestProjectRef.current = project;
+  latestCallbackRef.current = onUpdateProject;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (batchRunRef.current) batchRunRef.current.cancelled = true;
+    };
+  }, []);
+
+  const commitProject = (updated: ProjectData) => {
+    if (!mountedRef.current) return;
+    latestProjectRef.current = updated;
+    latestCallbackRef.current(updated);
+  };
 
   // Filtered chapters for current volume
   const filteredChapters = useMemo(() => {
@@ -72,6 +95,8 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
 
   const maxVolume = Math.max(1, Math.ceil(project.chapters.length / 50));
   const currentChapter = project.chapters.find(c => c.id === activeChapterId) || project.chapters[project.chapters.length - 1];
+  const currentChapterIdRef = useRef(currentChapter?.id);
+  currentChapterIdRef.current = currentChapter?.id;
 
   const handleUpdateChapterContent = (content: string) => {
     if (!currentChapter) return;
@@ -79,8 +104,7 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
       ch.id === currentChapter.id ? { ...ch, content, wordCount: content.length, updatedAt: new Date().toLocaleString() } : ch
     );
     const updated = { ...project, chapters: updatedChapters };
-    onUpdateProject(updated);
-    storageService.saveProject(updated);
+    commitProject(updated);
   };
 
   const handleUpdateChapterOutline = (outline: string) => {
@@ -89,8 +113,7 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
       ch.id === currentChapter.id ? { ...ch, outline } : ch
     );
     const updated = { ...project, chapters: updatedChapters };
-    onUpdateProject(updated);
-    storageService.saveProject(updated);
+    commitProject(updated);
   };
 
   const handleCreateNewChapter = () => {
@@ -111,57 +134,70 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
       status: 'draft'
     };
     const updated = { ...project, chapters: [...project.chapters, newCh] };
-    onUpdateProject(updated);
-    storageService.saveProject(updated);
+    commitProject(updated);
     setActiveChapterId(newCh.id);
     setSelectedVolumeFilter(Math.ceil(nextNum / 50));
   };
 
   // Run recursive memory extraction on current chapter (Auto-Story / recursive-novel mechanism)
   const handleCompressCurrentChapter = async () => {
-    if (!currentChapter || isCompressingExtraction) return;
+    const source = latestProjectRef.current;
+    const chapter = source.chapters.find(item => item.id === currentChapterIdRef.current);
+    if (!chapter || activeAIRef.current.extraction || activeAIRef.current.generation || batchRunRef.current) return;
+    const snapshot = captureNovelChapter(source, chapter.id);
+    activeAIRef.current.extraction = true;
     setIsCompressingExtraction(true);
+    setOperationNotice(null);
     try {
-      const extraction = await RecursiveSummaryEngine.extractAndCompressChapter(project, currentChapter);
-      const updatedChapters = project.chapters.map(ch => 
-        ch.id === currentChapter.id ? { ...ch, extraction, tensionScore: extraction.tensionScore } : ch
-      );
-      const updated = { ...project, chapters: updatedChapters };
-      onUpdateProject(updated);
-      storageService.saveProject(updated);
-      alert(`递归事实沉淀完成！\n本章提炼摘要: ${extraction.chapterSummary}\n评估张力: ${extraction.tensionScore}`);
+      const extraction = await RecursiveSummaryEngine.extractAndCompressChapter(source, chapter);
+      if (!mountedRef.current) return;
+      const updated = applyNovelChapterPatch(latestProjectRef.current, snapshot, { extraction, tensionScore: extraction.tensionScore });
+      const details = JSON.stringify(extraction, null, 2);
+      if (!updated || currentChapterIdRef.current !== chapter.id) {
+        setOperationNotice({ message: '章节已变化，摘要已保留供你参考。', details });
+        return;
+      }
+      commitProject(updated);
+      setOperationNotice({ message: `事实摘要已提取，叙事张力 ${extraction.tensionScore}。`, details });
+    } catch (error) {
+      if (mountedRef.current) setOperationNotice({ message: `摘要提取失败：${error instanceof Error ? error.message : '请稍后重试'}`, error: true });
     } finally {
-      setIsCompressingExtraction(false);
+      activeAIRef.current.extraction = false;
+      if (mountedRef.current) setIsCompressingExtraction(false);
     }
   };
 
   const handleTriggerAIGeneration = async () => {
-    if (!currentChapter) return;
+    const source = latestProjectRef.current;
+    const chapter = source.chapters.find(item => item.id === currentChapterIdRef.current);
+    if (!chapter || activeAIRef.current.generation || activeAIRef.current.extraction || batchRunRef.current) return;
+    const snapshot = captureNovelChapter(source, chapter.id);
+    activeAIRef.current.generation = true;
     setIsGenerating(true);
+    setOperationNotice(null);
+    setCurrentActWords(0);
     setGenerationActStatus('正在构建因果与四幕大纲...');
     try {
       const targetEvents = selectedEventForChapter && selectedEventForChapter.length > 0 
         ? selectedEventForChapter 
-        : project.events.slice(-3);
+        : source.events.slice(-3);
 
       const result = await GeminiService.generateChapter({
-        project,
-        volumeNumber: currentChapter.volumeNumber,
-        chapterNumber: currentChapter.chapterNumber,
+        project: source,
+        volumeNumber: chapter.volumeNumber,
+        chapterNumber: chapter.chapterNumber,
         povCharacterId: povCharId,
         events: targetEvents,
         userConstraint,
         onProgress: (actNum, actName, words, logMsg) => {
+          if (!mountedRef.current || latestProjectRef.current.id !== source.id) throw new Error('创作已离开当前作品');
           setGenerationActStatus(`[${actName}] ${logMsg}`);
           setCurrentActWords(words);
         },
       });
 
-      setLastActivatedLore(result.activatedLorebookKeys);
-
-      const updatedChapters = project.chapters.map(ch => 
-        ch.id === currentChapter.id ? {
-          ...ch,
+      if (!mountedRef.current) return;
+      const updated = applyNovelChapterPatch(latestProjectRef.current, snapshot, {
           title: result.title,
           outline: result.outline,
           content: result.content,
@@ -169,126 +205,117 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
           povCharacterId: povCharId,
           associatedEventIds: targetEvents.map(e => e.id),
           updatedAt: new Date().toLocaleString(),
-          status: 'draft' as const
-        } : ch
-      );
-
-      const updated = { ...project, chapters: updatedChapters };
-      onUpdateProject(updated);
-      storageService.saveProject(updated);
-    } catch (err) {
-      console.error(err);
+          status: 'draft' as const,
+      });
+      if (!updated || currentChapterIdRef.current !== chapter.id) {
+        setOperationNotice({ message: '章节已变化，生成草稿已保留供你参考。', details: `${result.title}\n\n【大纲】\n${result.outline}\n\n${result.content}` });
+        return;
+      }
+      setLastActivatedLore(result.activatedLorebookKeys);
+      commitProject(updated);
+      setOperationNotice({ message: '本章草稿已生成，可以继续修改。' });
+    } catch (error) {
+      if (mountedRef.current) setOperationNotice({ message: `章节生成失败：${error instanceof Error ? error.message : '请检查模型设置后重试'}`, error: true });
     } finally {
-      setIsGenerating(false);
-      setGenerationActStatus(null);
+      activeAIRef.current.generation = false;
+      if (mountedRef.current) {
+        setIsGenerating(false);
+        setGenerationActStatus(null);
+      }
     }
   };
 
-  // Continuous Auto-Runner Pipeline (Mode A)
+  // Each completed chapter is committed only while its source project is current.
   const handleStartBatchPipeline = async (batchCount: number) => {
+    if (batchRunRef.current || activeAIRef.current.generation || activeAIRef.current.extraction) return;
+    const run = { cancelled: false, projectId: latestProjectRef.current.id };
+    batchRunRef.current = run;
+    const isCancelled = () => run.cancelled || !mountedRef.current || latestProjectRef.current.id !== run.projectId;
+    setOperationNotice(null);
     setBatchPipeline({
-      isRunning: true,
-      isPaused: false,
-      targetChapterCount: batchCount,
-      completedInBatch: 0,
-      currentStepDescription: '启动持续创作批处理任务...',
-      currentChapterWordCount: 0,
-      errors: [],
-      lastSavedAt: new Date().toLocaleTimeString(),
+      isRunning: true, isPaused: false, targetChapterCount: batchCount, completedInBatch: 0,
+      currentStepDescription: '正在启动批量创作…', currentChapterWordCount: 0, errors: [], lastSavedAt: '尚未提交',
     });
-
-    let currentProj = { ...project };
-
-    for (let i = 0; i < batchCount; i++) {
-      try {
-        setBatchPipeline(prev => ({
-          ...prev,
-          currentStepDescription: `【第 ${i + 1}/${batchCount} 批】推进虚拟世界因果时间片...`,
-        }));
-
-        // Advance simulation time
-        const { updatedProject: steppedProject, newEvents } = SimulationEngine.stepTime(currentProj, 8);
-        currentProj = steppedProject;
-
-        const nextNum = currentProj.chapters.length + 1;
+    const outcome = await runNovelBatch({
+      targetCount: batchCount,
+      readProject: () => latestProjectRef.current,
+      isCancelled,
+      generate: async (source, index) => {
+        const { updatedProject: steppedProject, newEvents } = SimulationEngine.stepTime(source, 8);
+        const nextNum = Math.max(0, ...source.chapters.map(chapter => chapter.chapterNumber)) + 1;
         const nextVol = Math.ceil(nextNum / 100);
-
-        setBatchPipeline(prev => ({
-          ...prev,
-          currentStepDescription: `【第 ${i + 1}/${batchCount} 批】四幕接力执笔第 ${nextNum} 章 (保底4000字)...`,
-        }));
-
+        const characterId = source.characters.length > 0 ? source.characters[index % source.characters.length].id : undefined;
         const result = await GeminiService.generateChapter({
-          project: currentProj,
-          volumeNumber: nextVol,
-          chapterNumber: nextNum,
-          povCharacterId: currentProj.characters[i % currentProj.characters.length]?.id,
-          events: newEvents.length > 0 ? newEvents : currentProj.events.slice(-3),
+          project: steppedProject, volumeNumber: nextVol, chapterNumber: nextNum, povCharacterId: characterId,
+          events: newEvents.length > 0 ? newEvents : steppedProject.events.slice(-3),
           userConstraint: '严格执行四幕展开，环境与因果交融，单章不少于4000字。',
-          onProgress: (actNum, actName, words, logMsg) => {
-            setBatchPipeline(prev => ({
-              ...prev,
-              currentChapterWordCount: words,
-              currentStepDescription: `第 ${nextNum} 章 [${actName}] - 已达 ${words} 字`,
+          onProgress: (_actNum, actName, words) => {
+            if (isCancelled()) throw new Error('批量创作已停止');
+            setBatchPipeline(previous => ({
+              ...previous, currentChapterWordCount: words,
+              currentStepDescription: `第 ${nextNum} 章 [${actName}] · 已生成 ${words} 字`,
             }));
-          }
+          },
         });
-
-        const newChapter: Chapter = {
-          id: `chap_${Date.now()}_${nextNum}`,
-          volumeNumber: nextVol,
-          chapterNumber: nextNum,
-          title: result.title,
-          outline: result.outline,
-          content: result.content,
-          wordCount: result.content.length,
-          povCharacterId: currentProj.characters[i % currentProj.characters.length]?.id,
-          associatedEventIds: newEvents.map(e => e.id),
-          createdAt: new Date().toLocaleString(),
-          updatedAt: new Date().toLocaleString(),
-          status: 'draft',
+        const now = new Date().toISOString();
+        const chapter: Chapter = {
+          id: `chap_${crypto.randomUUID()}`, volumeNumber: nextVol, chapterNumber: nextNum,
+          title: result.title, outline: result.outline, content: result.content, wordCount: result.content.length,
+          povCharacterId: characterId, associatedEventIds: newEvents.map(event => event.id),
+          createdAt: now, updatedAt: now, status: 'draft',
         };
-
-        currentProj = {
-          ...currentProj,
-          chapters: [...currentProj.chapters, newChapter],
-        };
-
-        // Persist to IndexedDB after every chapter
-        onUpdateProject(currentProj);
-        storageService.saveProject(currentProj);
-
-        setActiveChapterId(newChapter.id);
-        setSelectedVolumeFilter(Math.ceil(nextNum / 50));
-
-        setBatchPipeline(prev => ({
-          ...prev,
-          completedInBatch: i + 1,
-          lastSavedAt: new Date().toLocaleTimeString(),
+        return { ...steppedProject, chapters: [...steppedProject.chapters, chapter] };
+      },
+      commit: (updated, completed) => {
+        if (isCancelled()) return;
+        commitProject(updated);
+        const chapter = updated.chapters[updated.chapters.length - 1];
+        setActiveChapterId(chapter.id);
+        setSelectedVolumeFilter(Math.ceil(chapter.chapterNumber / 50));
+        setBatchPipeline(previous => ({
+          ...previous, completedInBatch: completed, lastSavedAt: new Date().toLocaleTimeString(),
         }));
-      } catch (err: any) {
-        console.error('Batch error on index', i, err);
-        setBatchPipeline(prev => ({
-          ...prev,
-          errors: [...prev.errors, `第 ${i + 1} 章执行异常: ${err.message}`],
-        }));
-      }
-    }
-
-    setBatchPipeline(prev => ({
-      ...prev,
-      isRunning: false,
-      currentStepDescription: `批处理任务已顺利完成，本轮共新增 ${batchCount} 章！`,
+      },
+      onConflict: output => {
+        const chapter = output.chapters[output.chapters.length - 1];
+        setOperationNotice({
+          message: '作品在生成期间发生变化，批处理已停止。当前生成草稿已保留供你参考。',
+          details: `${chapter.title}\n\n【大纲】\n${chapter.outline}\n\n${chapter.content}`,
+        });
+      },
+      onError: message => {
+        if (mountedRef.current) setBatchPipeline(previous => ({ ...previous, errors: [...previous.errors, message] }));
+      },
+    });
+    if (batchRunRef.current === run) batchRunRef.current = null;
+    if (!mountedRef.current) return;
+    setBatchPipeline(previous => ({
+      ...previous, isRunning: false, isPaused: false,
+      completedInBatch: outcome.completed, errors: outcome.errors,
+      currentStepDescription: `${outcome.stopped ? '任务已停止' : '本轮创作结束'}：成功 ${outcome.completed} / ${batchCount} 章，${outcome.errors.length} 项异常。`,
     }));
   };
 
+  const handleStopBatchPipeline = () => {
+    if (!batchRunRef.current) return;
+    batchRunRef.current.cancelled = true;
+    setBatchPipeline(previous => ({
+      ...previous, isPaused: true, currentStepDescription: '正在停止，当前请求结束后将丢弃结果。',
+    }));
+  };
   const handleGetSuggestions = async () => {
+    if (activeAIRef.current.suggestions) return;
+    const source = latestProjectRef.current;
+    activeAIRef.current.suggestions = true;
     setIsAskingSuggestion(true);
     try {
-      const suggestions = await GeminiService.coWriteSuggestions(project, userConstraint || '请给出符合当前人物心境的发展推演');
-      setAiSuggestions(suggestions);
+      const suggestions = await GeminiService.coWriteSuggestions(source, userConstraint || '请给出符合当前人物心境的发展推演');
+      if (mountedRef.current && latestProjectRef.current.id === source.id) setAiSuggestions(suggestions);
+    } catch (error) {
+      if (mountedRef.current) setOperationNotice({ message: `构思请求失败：${error instanceof Error ? error.message : '请稍后重试'}`, error: true });
     } finally {
-      setIsAskingSuggestion(false);
+      activeAIRef.current.suggestions = false;
+      if (mountedRef.current) setIsAskingSuggestion(false);
     }
   };
 
@@ -303,12 +330,12 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-900/60 text-purple-300 border border-purple-700/50">
-                超长篇持续续航保障引擎 (IndexedDB 工业级存储)
+                长篇创作计划
               </span>
               <span className="text-xs text-slate-400">单章保底目标: <strong>≥ 4,000 字</strong></span>
             </div>
             <div className="flex flex-wrap items-center gap-4 text-sm mt-1">
-              <div>已撰写: <span className="text-xl font-bold font-mono text-white">{project.chapters.length}</span> <span className="text-slate-400 text-xs">/ 3000+ 章</span></div>
+                <div>已撰写: <span className="text-xl font-bold font-mono text-white">{project.chapters.length}</span> <span className="text-slate-400 text-xs">章</span></div>
               <div>累计产出: <span className="text-xl font-bold font-mono text-purple-300">{(totalWords / 10000).toFixed(2)}</span> <span className="text-slate-400 text-xs">万字</span></div>
               <div>均章篇幅: <span className={`text-sm font-bold font-mono ${avgWords >= 4000 ? 'text-green-400' : 'text-amber-400'}`}>{avgWords}</span> <span className="text-slate-400 text-xs">字/章</span></div>
             </div>
@@ -319,14 +346,14 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
             <button
               onClick={() => setShowChaosOracle(true)}
               className="px-3 py-2 bg-purple-950/60 hover:bg-purple-900/80 text-purple-300 text-xs font-semibold rounded-lg border border-purple-800 transition flex items-center gap-1.5"
-              title="掷出剧情因果神谕（开源 TaleCrafter 机制）"
+              title="为故事寻找一个新的转折"
             >
               <Dices className="w-3.5 h-3.5 text-yellow-400" />
               混沌神谕骰子
             </button>
             <button
               onClick={() => handleStartBatchPipeline(3)}
-              disabled={batchPipeline.isRunning}
+              disabled={batchPipeline.isRunning || isGenerating || isCompressingExtraction}
               className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition flex items-center gap-1.5 disabled:opacity-50"
               title="自动模拟时间并连续创作 3 篇 4000+ 字完整大章"
             >
@@ -335,7 +362,7 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
             </button>
             <button
               onClick={() => handleStartBatchPipeline(10)}
-              disabled={batchPipeline.isRunning}
+              disabled={batchPipeline.isRunning || isGenerating || isCompressingExtraction}
               className="px-3.5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-semibold rounded-lg shadow transition flex items-center gap-1.5 disabled:opacity-50"
               title="自动模拟演进并连续创作 10 篇大章"
             >
@@ -353,18 +380,25 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
         </div>
 
         {/* Batch Status Bar */}
-        {batchPipeline.isRunning && (
-          <div className="mt-4 pt-4 border-t border-slate-800/80 flex items-center justify-between text-xs text-purple-300 bg-purple-950/30 p-3 rounded-lg border border-purple-800/50 animate-pulse">
-            <div className="flex items-center gap-2">
-              <Activity className="w-4 h-4 text-purple-400 animate-spin" />
-              <span>{batchPipeline.currentStepDescription}</span>
+        {(batchPipeline.isRunning || batchPipeline.currentStepDescription !== '准备就绪') && (
+          <div className="mt-4 space-y-3 rounded-lg border border-purple-800/50 bg-purple-950/30 p-3 text-xs text-purple-300">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2" role="status">
+                <Activity className={`h-4 w-4 shrink-0 text-purple-400 ${batchPipeline.isRunning && !batchPipeline.isPaused ? 'animate-spin' : ''}`} />
+                <span>{batchPipeline.currentStepDescription}</span>
+              </div>
+              {batchPipeline.isRunning && <button onClick={handleStopBatchPipeline} disabled={batchPipeline.isPaused} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-purple-800 px-3 py-1 disabled:opacity-50"><Pause className="h-3.5 w-3.5" />{batchPipeline.isPaused ? '正在停止…' : '停止任务'}</button>}
             </div>
-            <span className="font-mono">
-              进度: {batchPipeline.completedInBatch} / {batchPipeline.targetChapterCount} 章
-            </span>
+            <p className="text-[11px] text-slate-400">已提交 {batchPipeline.completedInBatch} / {batchPipeline.targetChapterCount} 章{batchPipeline.isRunning ? ' · 离开本页会停止后续创作' : ''}</p>
+            {batchPipeline.errors.length > 0 && <details className="text-[11px] text-amber-200"><summary className="cursor-pointer">查看 {batchPipeline.errors.length} 项异常</summary><ul className="mt-2 list-inside list-disc space-y-1">{batchPipeline.errors.map((message, index) => <li key={index}>{message}</li>)}</ul></details>}
           </div>
         )}
       </div>
+
+      {operationNotice && <div className={`rounded-xl border p-4 text-xs ${operationNotice.error ? 'border-red-800/60 bg-red-950/20 text-red-200' : 'border-purple-800/50 bg-slate-900 text-slate-200'}`}>
+        <div className="flex items-start justify-between gap-4"><p role={operationNotice.error ? 'alert' : 'status'} className="leading-relaxed">{operationNotice.message}</p><button onClick={() => setOperationNotice(null)} aria-label="关闭创作提示" className="shrink-0 rounded px-2 py-1 text-[11px] text-slate-400">关闭</button></div>
+        {operationNotice.details && <details className="mt-3"><summary className="cursor-pointer text-purple-300">查看生成内容（可选取复制）</summary><textarea readOnly aria-label="保留的创作结果" value={operationNotice.details} className="mt-3 min-h-48 w-full rounded-lg border border-slate-800 bg-slate-950 p-3 font-serif leading-relaxed text-slate-200" /></details>}
+      </div>}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Chapter Sidebar with Pagination for 3000 Chapters */}
@@ -373,7 +407,7 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-1.5">
                 <BookOpen className="w-4 h-4 text-purple-400" />
-                超长篇目录管理
+                章节目录
               </h3>
               <button
                 onClick={handleCreateNewChapter}
@@ -432,10 +466,12 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
                 const isSelected = ch.id === currentChapter?.id;
                 const meetsStandard = ch.wordCount >= 4000;
                 return (
-                  <div
+                  <button
+                    type="button"
                     key={ch.id}
                     onClick={() => setActiveChapterId(ch.id)}
-                    className={`p-2.5 rounded-lg border text-xs cursor-pointer transition ${
+                    aria-pressed={isSelected}
+                    className={`block w-full text-left p-2.5 rounded-lg border text-xs cursor-pointer transition ${
                       isSelected 
                         ? 'bg-purple-950/40 border-purple-500 text-white' 
                         : 'bg-slate-800/40 border-slate-800/80 text-slate-300 hover:border-slate-700'
@@ -449,7 +485,7 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
                         {ch.wordCount}字
                       </span>
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>
@@ -509,7 +545,7 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
               </button>
               <button
                 onClick={handleTriggerAIGeneration}
-                disabled={isGenerating}
+                disabled={isGenerating || isCompressingExtraction || batchPipeline.isRunning || !currentChapter}
                 className="py-2 bg-purple-600 hover:bg-purple-500 text-white font-semibold rounded-lg transition flex items-center justify-center gap-1 shadow"
               >
                 <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
@@ -545,7 +581,7 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
                       const updatedChapters = project.chapters.map(ch => 
                         ch.id === currentChapter.id ? { ...ch, title: e.target.value } : ch
                       );
-                      onUpdateProject({ ...project, chapters: updatedChapters });
+                      commitProject({ ...project, chapters: updatedChapters });
                     }}
                     className="text-xl font-serif font-bold text-white bg-transparent border-b border-transparent hover:border-slate-700 focus:border-purple-500 outline-none w-full"
                   />
@@ -563,7 +599,7 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
                 <div className="flex items-center gap-2">
                   <button
                     onClick={handleCompressCurrentChapter}
-                    disabled={isCompressingExtraction}
+                    disabled={isCompressingExtraction || isGenerating || batchPipeline.isRunning}
                     className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-purple-300 text-xs rounded-lg border border-slate-700 flex items-center gap-1.5 transition"
                     title="自动提炼本章事实沉淀为超长篇递归记忆"
                   >
@@ -577,8 +613,7 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
                         ch.id === currentChapter.id ? { ...ch, status: 'final' as const } : ch
                       );
                       const updated = { ...project, chapters: updatedChapters };
-                      onUpdateProject(updated);
-                      storageService.saveProject(updated);
+                      commitProject(updated);
                     }}
                     className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded-lg border border-slate-700 flex items-center gap-1.5 transition"
                   >

@@ -1,14 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { ProjectData, Chapter, WritingDeskSettings, ImportedDocument } from '../types';
-import { storageService } from '../services/storageService';
+import React, { useEffect, useRef, useState } from 'react';
+import type { ProjectData, WritingDeskSettings } from '../types';
 import { soundEffects } from '../services/soundEffects';
 import { AIProviderService } from '../services/aiProviderService';
-import { 
-  Maximize2, Minimize2, BookOpen, Target, 
-  AlignLeft, SplitSquareVertical, 
-  Check, Type, Palette, Volume2, VolumeX,
-  Sparkles, Wand2, ArrowUpRight, Flame, Clock, RefreshCw
-} from 'lucide-react';
+import { AlignLeft, BookOpen, Check, ChevronRight, Feather, List, Maximize2, Minimize2, Palette, Plus, RefreshCw, Sparkles, SplitSquareVertical, Target, Volume2, VolumeX, Wand2, X } from 'lucide-react';
+import { applyWritingAssistantResult, createWritingChapter, defaultWritingSettings, formatWritingParagraphs, updateWritingContent, updateWritingPreferences } from './writingWorkspace';
 
 interface AuthorDeskEditorProps {
   project: ProjectData;
@@ -16,450 +11,198 @@ interface AuthorDeskEditorProps {
   onOpenDocumentLibrary: () => void;
 }
 
-export const AuthorDeskEditor: React.FC<AuthorDeskEditorProps> = ({
-  project,
-  onUpdateProject,
-  onOpenDocumentLibrary,
-}) => {
-  const [activeChapterId, setActiveChapterId] = useState<string>(project.chapters[0]?.id || '');
-  const [deskSettings, setDeskSettings] = useState<WritingDeskSettings>(project.deskSettings || {
-    targetDailyWords: 6000,
-    currentSessionWords: 0,
-    isZenMode: false,
-    typewriterMode: true,
-    indentParagraphs: true,
-    theme: 'ink',
-    fontSize: 18,
-    lineHeight: 1.9,
-    fontFamily: 'serif',
-    soundEnabled: true,
-  });
+const writingThemes = {
+  ink: { label: '玄墨暗夜', bg: '#161817', surface: '#1d201e', text: '#e9e4d9', muted: '#a09e92', border: '#373a32', accent: '#dfbc7e' },
+  sepia: { label: '古雅羊皮', bg: '#f4ecd8', surface: '#e9dec5', text: '#3f2f21', muted: '#7c644c', border: '#d3c29e', accent: '#85602b' },
+  dark_emerald: { label: '竹墨护眼', bg: '#081b16', surface: '#102a23', text: '#c7e8dc', muted: '#8aac9f', border: '#2b4d40', accent: '#a6cdb5' },
+  solarized: { label: '日光暖纸', bg: '#fdf6e3', surface: '#eee8d5', text: '#586e75', muted: '#657b83', border: '#d4cdbb', accent: '#926b08' },
+  nord: { label: '极地冰蓝', bg: '#2e3440', surface: '#3b4252', text: '#eceff4', muted: '#b2bdce', border: '#566175', accent: '#b0c9dc' },
+};
 
-  const [initialSessionCount, setInitialSessionCount] = useState<number>(0);
-  const [showThemePicker, setShowThemePicker] = useState<boolean>(false);
-  const [splitDocPreview, setSplitDocPreview] = useState<ImportedDocument | null>(project.referenceDocs?.[0] || null);
-  const [isSplitReferenceOpen, setIsSplitReferenceOpen] = useState<boolean>(false);
-  const [saveStatus, setSaveStatus] = useState<string>('已自动存盘');
-  const [isAIAssisting, setIsAIAssisting] = useState<boolean>(false);
-  const [selectedSnippet, setSelectedSnippet] = useState<string>('');
-
+export const AuthorDeskEditor: React.FC<AuthorDeskEditorProps> = ({ project, onUpdateProject, onOpenDocumentLibrary }) => {
+  const [activeChapterId, setActiveChapterId] = useState(project.chapters[0]?.id || '');
+  const [showChapterList, setShowChapterList] = useState(false);
+  const [showThemePicker, setShowThemePicker] = useState(false);
+  const [isSplitReferenceOpen, setIsSplitReferenceOpen] = useState(false);
+  const [referenceId, setReferenceId] = useState(project.referenceDocs?.[0]?.id || '');
+  const [saveStatus, setSaveStatus] = useState('编辑内容将自动保存');
+  const [isAIAssisting, setIsAIAssisting] = useState(false);
+  const [assistantNotice, setAssistantNotice] = useState('');
+  const [pendingAIText, setPendingAIText] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const latestProject = useRef(project);
+  const latestCallback = useRef(onUpdateProject);
+  const mounted = useRef(true);
+  const requestRunning = useRef(false);
+  latestProject.current = project;
+  latestCallback.current = onUpdateProject;
 
-  const currentChapter = project.chapters.find(c => c.id === activeChapterId) || project.chapters[0];
+  const deskSettings = { ...defaultWritingSettings, ...project.deskSettings };
+  const currentChapter = project.chapters.find(chapter => chapter.id === activeChapterId) || project.chapters[0];
+  const currentChapterId = useRef(currentChapter?.id);
+  currentChapterId.current = currentChapter?.id;
+  const reference = project.referenceDocs?.find(doc => doc.id === referenceId) || project.referenceDocs?.[0];
+  const theme = writingThemes[deskSettings.theme] || writingThemes.ink;
+  const themeStyle = {
+    '--desk-bg': theme.bg, '--desk-surface': theme.surface, '--desk-text': theme.text,
+    '--desk-muted': theme.muted, '--desk-border': theme.border, '--desk-accent': theme.accent,
+    background: theme.bg, color: theme.text, borderColor: theme.border,
+    colorScheme: deskSettings.theme === 'sepia' || deskSettings.theme === 'solarized' ? 'light' : 'dark',
+  } as React.CSSProperties;
 
   useEffect(() => {
-    if (currentChapter) {
-      setInitialSessionCount(currentChapter.wordCount);
-    }
-  }, [activeChapterId]);
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
-  // Handle typing & dynamic word counting
-  const handleContentChange = (newContent: string) => {
-    if (!currentChapter) return;
-    
-    if (deskSettings.soundEnabled) {
-      soundEffects.playKeyClick();
-    }
-
-    const words = newContent.length;
-
-    const updatedChapters = project.chapters.map(ch => 
-      ch.id === currentChapter.id ? {
-        ...ch,
-        content: newContent,
-        wordCount: words,
-        updatedAt: new Date().toLocaleString(),
-      } : ch
-    );
-
-    const updatedSettings = {
-      ...deskSettings,
-      currentSessionWords: deskSettings.currentSessionWords + (words > currentChapter.wordCount ? (words - currentChapter.wordCount) : 0),
-    };
-
-    setDeskSettings(updatedSettings);
-
-    const updatedProject = {
-      ...project,
-      chapters: updatedChapters,
-      deskSettings: updatedSettings,
-    };
-
-    onUpdateProject(updatedProject);
-    storageService.saveProject(updatedProject);
-
-    setSaveStatus('正在存盘...');
-    setTimeout(() => setSaveStatus('已自动存盘'), 600);
+  const commitProject = (updated: ProjectData) => {
+    latestProject.current = updated;
+    latestCallback.current(updated);
+    setSaveStatus('修改已交由工作台保存');
+  };
+  const changePreferences = (patch: Partial<WritingDeskSettings>) => {
+    commitProject(updateWritingPreferences(latestProject.current, patch));
   };
 
-  // Color themes for the writing environment
-  const themeClassMap: Record<string, { bg: string; text: string; card: string; border: string }> = {
-    ink: {
-      bg: 'bg-slate-950',
-      text: 'text-slate-100',
-      card: 'bg-slate-900/90',
-      border: 'border-slate-800',
-    },
-    sepia: {
-      bg: 'bg-[#f4ecd8]',
-      text: 'text-[#3f2f21]',
-      card: 'bg-[#e8dcbf]',
-      border: 'border-[#d3c29e]',
-    },
-    dark_emerald: {
-      bg: 'bg-[#061814]',
-      text: 'text-[#c2e4d8]',
-      card: 'bg-[#0b2821]',
-      border: 'border-[#123e34]',
-    },
-    nord: {
-      bg: 'bg-[#2e3440]',
-      text: 'text-[#eceff4]',
-      card: 'bg-[#3b4252]',
-      border: 'border-[#4c566a]',
-    },
+  useEffect(() => {
+    if (!deskSettings.isZenMode) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        const updated = updateWritingPreferences(latestProject.current, { isZenMode: false });
+        latestProject.current = updated;
+        latestCallback.current(updated);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [deskSettings.isZenMode]);
+
+  const handleContentChange = (content: string) => {
+    const latest = latestProject.current;
+    const id = currentChapterId.current;
+    if (!id) return;
+    if (latest.deskSettings?.soundEnabled ?? defaultWritingSettings.soundEnabled) soundEffects.playKeyClick();
+    commitProject(updateWritingContent(latest, id, content, new Date().toISOString()));
   };
-
-  const currentTheme = themeClassMap[deskSettings.theme] || themeClassMap.ink;
-
-  // Format paragraphs with 2-em indentation
+  const handleCreateChapter = () => {
+    const latest = latestProject.current;
+    const chapter = createWritingChapter(latest, `chap_${crypto.randomUUID()}`, new Date().toISOString());
+    commitProject({ ...latest, chapters: [...latest.chapters, chapter] });
+    setActiveChapterId(chapter.id);
+    setShowChapterList(false);
+  };
   const handleFormatIndent = () => {
     if (!currentChapter) return;
-    const formatted = currentChapter.content
-      .split('\n')
-      .map(line => {
-        const trimmed = line.trim();
-        if (trimmed.length === 0) return '';
-        if (trimmed.startsWith('　　')) return trimmed;
-        return `　　${trimmed}`;
-      })
-      .join('\n\n');
-
-    handleContentChange(formatted);
-    soundEffects.playChime();
+    handleContentChange(formatWritingParagraphs(currentChapter.content));
+    if (deskSettings.soundEnabled) soundEffects.playChime();
   };
 
-  // AI Instant Polish/Expand for selected or recent text
-  const handleAIPolishSnippet = async (type: 'polish' | 'expand') => {
-    if (!currentChapter || isAIAssisting) return;
-    setIsAIAssisting(true);
-
+  const handleAIPolishSnippet = async (operation: 'polish' | 'expand') => {
+    const source = latestProject.current;
+    const chapter = source.chapters.find(item => item.id === currentChapterId.current);
+    if (!chapter || requestRunning.current) return;
     const textarea = textareaRef.current;
-    let targetText = '';
-    let isSelection = false;
-
-    if (textarea && textarea.selectionStart !== textarea.selectionEnd) {
-      targetText = currentChapter.content.substring(textarea.selectionStart, textarea.selectionEnd);
-      isSelection = true;
-    } else {
-      // Take last 300 characters
-      targetText = currentChapter.content.slice(-350);
-    }
-
+    const hasSelection = !!textarea && textarea.selectionStart !== textarea.selectionEnd;
+    const start = hasSelection ? textarea!.selectionStart : Math.max(0, chapter.content.length - 350);
+    const end = hasSelection ? textarea!.selectionEnd : chapter.content.length;
+    const targetText = chapter.content.slice(start, end);
     if (!targetText.trim()) {
-      setIsAIAssisting(false);
+      setAssistantNotice('先写下一段文字，或选中想要修改的段落。');
       return;
     }
-
-    const instruction = type === 'polish'
+    const request = {
+      projectId: source.id, chapterId: chapter.id, sourceContent: chapter.content,
+      replaceStart: operation === 'expand' && !hasSelection ? chapter.content.length : start,
+      replaceEnd: operation === 'expand' && !hasSelection ? chapter.content.length : end,
+    };
+    requestRunning.current = true;
+    setIsAIAssisting(true);
+    setAssistantNotice('正在整理灵感，你可以继续写作。');
+    setPendingAIText('');
+    const instruction = operation === 'polish'
       ? '请将以下小说段落进行古典文学性润色，增强环境音画、人物细微眼神与情绪暗涌，去除网络化白话：'
       : '请紧密接续以下剧情，顺畅扩写两段具有极强文学厚度的叙事正文（约300字）：';
-
     try {
-      const generated = await AIProviderService.generateText(project.aiConfig, {
-        prompt: `${instruction}\n\n“${targetText}”\n\n直接输出处理后的纯正文。`,
-        overrideSampling: { temperature: 0.75 },
+      const generated = await AIProviderService.generateText(source.aiConfig, {
+        prompt: `${instruction}\n\n“${targetText}”\n\n直接输出处理后的纯正文。`, overrideSampling: { temperature: 0.75 },
       });
-
-      if (generated && generated.trim()) {
-        soundEffects.playChime();
-        if (isSelection && textarea) {
-          const before = currentChapter.content.substring(0, textarea.selectionStart);
-          const after = currentChapter.content.substring(textarea.selectionEnd);
-          handleContentChange(before + generated.trim() + after);
-        } else {
-          handleContentChange(currentChapter.content + '\n\n' + generated.trim());
-        }
+      if (!mounted.current) return;
+      if (!generated?.trim()) { setAssistantNotice('本次没有生成文字，请稍后重试。'); return; }
+      const text = operation === 'expand' && !hasSelection ? `\n\n${generated.trim()}` : generated.trim();
+      const result = applyWritingAssistantResult(latestProject.current, request, text, new Date().toISOString());
+      if (!result.applied || currentChapterId.current !== request.chapterId) {
+        setPendingAIText(generated.trim());
+        setAssistantNotice('正文或当前章节已变化，生成结果已保留供你参考。');
+        return;
       }
-    } catch (e: any) {
-      alert(`AI 灵感生成未完成: ${e.message}`);
+      commitProject(result.project);
+      setAssistantNotice(operation === 'polish' ? '段落润色已应用。' : '续写已添加。');
+      if (result.project.deskSettings?.soundEnabled) soundEffects.playChime();
+    } catch (error) {
+      if (mounted.current) setAssistantNotice(`灵感生成暂未完成：${error instanceof Error ? error.message : '请检查模型设置后重试'}`);
     } finally {
-      setIsAIAssisting(false);
+      requestRunning.current = false;
+      if (mounted.current) setIsAIAssisting(false);
     }
   };
 
-  const currentWords = currentChapter?.wordCount || 0;
-  const progressRatio = Math.min(100, Math.round((deskSettings.currentSessionWords / deskSettings.targetDailyWords) * 100));
+  const totalWords = project.chapters.reduce((sum, chapter) => sum + chapter.wordCount, 0);
+  const progressRatio = Math.min(100, Math.round(deskSettings.currentSessionWords / Math.max(1, deskSettings.targetDailyWords) * 100));
+  const toolClass = 'desk-tool inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-[var(--desk-border)] px-2.5 py-1.5 text-xs transition hover:bg-black/10 disabled:opacity-40';
+  const iconClass = 'h-3.5 w-3.5';
 
   return (
-    <div className={`transition-all duration-300 flex flex-col rounded-2xl border ${currentTheme.border} ${currentTheme.bg} ${currentTheme.text} overflow-hidden shadow-2xl relative ${
-      deskSettings.isZenMode ? 'fixed inset-0 z-50 rounded-none border-none' : 'min-h-[85vh]'
-    }`}>
-      {/* Top Floating Glass Toolbar */}
-      <div className={`px-4 sm:px-6 py-2.5 border-b ${currentTheme.border} ${currentTheme.card} backdrop-blur-md flex flex-wrap items-center justify-between gap-3 text-xs select-none sticky top-0 z-30`}>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 font-bold font-serif text-sm tracking-wide">
-            <span className="w-2 h-2 rounded-full bg-purple-400 animate-ping"></span>
-            <span>作者码字台</span>
-          </div>
-
-          <span className="hidden sm:inline-block opacity-30">/</span>
-
-          {/* Chapter Quick Switcher */}
-          <select
-            value={activeChapterId}
-            onChange={e => setActiveChapterId(e.target.value)}
-            className={`bg-black/20 border ${currentTheme.border} rounded-lg px-2.5 py-1 text-xs outline-none max-w-[220px] font-medium truncate`}
-          >
-            {project.chapters.map(ch => (
-              <option key={ch.id} value={ch.id} className="bg-slate-900 text-slate-100">
-                #{ch.chapterNumber} {ch.title} ({ch.wordCount}字)
-              </option>
-            ))}
-          </select>
-
-          <span className="text-[11px] opacity-70 font-mono hidden md:inline-flex items-center gap-1">
-            <Check className="w-3 h-3 text-emerald-400" />
-            {saveStatus}
-          </span>
-        </div>
-
-        {/* Action Controls */}
-        <div className="flex items-center gap-1.5 sm:gap-2">
-          {/* AI Instant Polish/Expand */}
-          <button
-            onClick={() => handleAIPolishSnippet('polish')}
-            disabled={isAIAssisting}
-            className={`px-2.5 py-1 rounded-lg flex items-center gap-1 border border-purple-500/40 bg-purple-950/40 hover:bg-purple-900/60 text-purple-200 transition ${isAIAssisting ? 'opacity-50' : ''}`}
-            title="对选中文本或最近段落进行文学润色"
-          >
-            {isAIAssisting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5 text-purple-400" />}
-            <span className="hidden sm:inline">文采润色</span>
-          </button>
-
-          <button
-            onClick={() => handleAIPolishSnippet('expand')}
-            disabled={isAIAssisting}
-            className={`px-2.5 py-1 rounded-lg flex items-center gap-1 border border-purple-500/40 bg-purple-950/40 hover:bg-purple-900/60 text-purple-200 transition ${isAIAssisting ? 'opacity-50' : ''}`}
-            title="接续当前光标或段落智能续写展开"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
-            <span className="hidden sm:inline">顺滑续写</span>
-          </button>
-
-          {/* Format Paragraphs Indent */}
-          <button
-            onClick={handleFormatIndent}
-            className={`px-2.5 py-1 bg-black/20 hover:bg-black/30 rounded-lg flex items-center gap-1 border ${currentTheme.border} transition`}
-            title="一键首行全角缩进与空行规范"
-          >
-            <AlignLeft className="w-3.5 h-3.5 text-purple-400" />
-            <span className="hidden sm:inline">段落排版</span>
-          </button>
-
-          {/* Sound Toggle */}
-          <button
-            onClick={() => setDeskSettings({ ...deskSettings, soundEnabled: !deskSettings.soundEnabled })}
-            className={`p-1.5 bg-black/20 hover:bg-black/30 rounded-lg border ${currentTheme.border}`}
-            title={deskSettings.soundEnabled ? '已开启打字音效' : '已静音打字音效'}
-          >
-            {deskSettings.soundEnabled ? <Volume2 className="w-3.5 h-3.5 text-purple-400" /> : <VolumeX className="w-3.5 h-3.5 text-slate-500" />}
-          </button>
-
-          {/* Split Reference Doc Toggle */}
-          <button
-            onClick={() => setIsSplitReferenceOpen(!isSplitReferenceOpen)}
-            className={`px-2.5 py-1 rounded-lg flex items-center gap-1 border transition ${
-              isSplitReferenceOpen ? 'bg-purple-600 text-white border-purple-500' : `bg-black/20 border ${currentTheme.border}`
-            }`}
-            title="双屏对照：在右侧对照阅读 TXT/EPUB/PDF 参考书"
-          >
-            <SplitSquareVertical className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">双屏对照</span>
-          </button>
-
-          {/* Open Document Library */}
-          <button
-            onClick={onOpenDocumentLibrary}
-            className={`px-2.5 py-1 bg-black/20 hover:bg-black/30 rounded-lg flex items-center gap-1 border ${currentTheme.border} transition`}
-            title="打开文献参考书架"
-          >
-            <BookOpen className="w-3.5 h-3.5 text-purple-400" />
-            <span className="hidden sm:inline">文献库</span>
-          </button>
-
-          {/* Theme Palette Switcher */}
+    <section aria-label="写作工作台" data-writing-theme={deskSettings.theme} style={themeStyle} className={`writing-workspace flex min-w-0 flex-col overflow-hidden rounded-2xl border shadow-xl ${deskSettings.isZenMode ? 'fixed inset-0 z-50 rounded-none border-0' : 'min-h-[700px]'}`}>
+      <header className="desk-toolbar flex flex-wrap items-center justify-between gap-3 border-b border-[var(--desk-border)] bg-[var(--desk-surface)] px-4 py-3 sm:px-5">
+        <div className="flex min-w-0 items-center gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[var(--desk-border)] text-[var(--desk-accent)]"><Feather className="h-4 w-4" /></span><div><h3 className="font-serif text-sm font-semibold">留白之间，故事生长</h3><p className="mt-1 text-[10px] text-[var(--desk-muted)]" role="status">{saveStatus}</p></div></div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button onClick={() => setShowChapterList(!showChapterList)} className={`${toolClass} xl:hidden`} aria-expanded={showChapterList} aria-controls="desk-chapter-list"><List className={iconClass} />章节</button>
+          <button onClick={() => setIsSplitReferenceOpen(!isSplitReferenceOpen)} className={toolClass} aria-pressed={isSplitReferenceOpen} aria-label="对照素材"><SplitSquareVertical className={iconClass} /><span className="hidden sm:inline">对照素材</span></button>
+          <button onClick={onOpenDocumentLibrary} className={toolClass} aria-label="打开文献库"><BookOpen className={iconClass} /><span className="hidden sm:inline">文献库</span></button>
+          <button onClick={() => changePreferences({ soundEnabled: !deskSettings.soundEnabled })} className={toolClass} aria-label={deskSettings.soundEnabled ? '关闭打字音效' : '开启打字音效'} aria-pressed={deskSettings.soundEnabled}>{deskSettings.soundEnabled ? <Volume2 className={iconClass} /> : <VolumeX className={iconClass} />}</button>
           <div className="relative">
-            <button
-              onClick={() => setShowThemePicker(!showThemePicker)}
-              className={`p-1.5 bg-black/20 hover:bg-black/30 rounded-lg border ${currentTheme.border}`}
-              title="切换纸张色彩"
-            >
-              <Palette className="w-3.5 h-3.5 text-purple-400" />
-            </button>
-
-            {showThemePicker && (
-              <div className="absolute right-0 top-8 z-50 bg-slate-900 border border-slate-700 rounded-xl p-2.5 shadow-2xl flex flex-col gap-1 w-32 text-xs text-slate-200">
-                <button 
-                  onClick={() => { setDeskSettings({ ...deskSettings, theme: 'ink' }); setShowThemePicker(false); }} 
-                  className="px-2 py-1.5 rounded hover:bg-slate-800 text-left flex items-center justify-between"
-                >
-                  <span>玄墨暗夜</span>
-                  {deskSettings.theme === 'ink' && <Check className="w-3 h-3 text-purple-400" />}
-                </button>
-                <button 
-                  onClick={() => { setDeskSettings({ ...deskSettings, theme: 'sepia' }); setShowThemePicker(false); }} 
-                  className="px-2 py-1.5 rounded hover:bg-slate-800 text-left flex items-center justify-between"
-                >
-                  <span>古雅羊皮</span>
-                  {deskSettings.theme === 'sepia' && <Check className="w-3 h-3 text-purple-400" />}
-                </button>
-                <button 
-                  onClick={() => { setDeskSettings({ ...deskSettings, theme: 'dark_emerald' }); setShowThemePicker(false); }} 
-                  className="px-2 py-1.5 rounded hover:bg-slate-800 text-left flex items-center justify-between"
-                >
-                  <span>竹墨护眼</span>
-                  {deskSettings.theme === 'dark_emerald' && <Check className="w-3 h-3 text-purple-400" />}
-                </button>
-                <button 
-                  onClick={() => { setDeskSettings({ ...deskSettings, theme: 'nord' }); setShowThemePicker(false); }} 
-                  className="px-2 py-1.5 rounded hover:bg-slate-800 text-left flex items-center justify-between"
-                >
-                  <span>极地冰蓝</span>
-                  {deskSettings.theme === 'nord' && <Check className="w-3 h-3 text-purple-400" />}
-                </button>
-              </div>
-            )}
+            <button onClick={() => setShowThemePicker(!showThemePicker)} className={toolClass} aria-label="写作外观设置" aria-expanded={showThemePicker} aria-controls="desk-appearance"><Palette className={iconClass} /></button>
+            {showThemePicker && <div id="desk-appearance" className="desk-appearance absolute right-0 top-11 z-40 w-60 rounded-xl border border-[var(--desk-border)] bg-[var(--desk-surface)] p-3 shadow-2xl">
+              <div className="mb-2 flex items-center justify-between"><span className="text-xs font-semibold">写作外观</span><button onClick={() => setShowThemePicker(false)} aria-label="关闭外观设置" className="rounded p-1"><X className={iconClass} /></button></div>
+              <div className="space-y-1">{Object.entries(writingThemes).map(([id, choice]) => <button key={id} onClick={() => changePreferences({ theme: id as WritingDeskSettings['theme'] })} aria-pressed={deskSettings.theme === id} className="flex min-h-9 w-full items-center justify-between rounded-lg px-2 text-left text-xs hover:bg-black/10"><span className="flex items-center gap-2"><span className="h-3 w-3 rounded-full border border-black/20" style={{ background: choice.bg }} />{choice.label}</span>{deskSettings.theme === id && <Check className={iconClass} />}</button>)}</div>
+              <label className="mt-3 block border-t border-[var(--desk-border)] pt-3 text-xs">正文字体<select value={deskSettings.fontFamily} onChange={event => changePreferences({ fontFamily: event.target.value as 'serif' | 'sans' })} className="mt-2 w-full rounded-lg border border-[var(--desk-border)] bg-[var(--desk-bg)] p-2 text-inherit"><option value="serif">宋体 · 文学阅读</option><option value="sans">黑体 · 清晰简洁</option></select></label>
+              <label className="mt-3 block text-xs">行间距<select value={deskSettings.lineHeight} onChange={event => changePreferences({ lineHeight: Number(event.target.value) })} className="mt-2 w-full rounded-lg border border-[var(--desk-border)] bg-[var(--desk-bg)] p-2 text-inherit"><option value={1.6}>紧凑</option><option value={1.9}>舒适</option><option value={2.2}>宽松</option></select></label>
+            </div>}
           </div>
-
-          {/* Fullscreen Zen Mode */}
-          <button
-            onClick={() => setDeskSettings({ ...deskSettings, isZenMode: !deskSettings.isZenMode })}
-            className={`p-1.5 bg-black/20 hover:bg-black/30 rounded-lg border ${currentTheme.border}`}
-            title={deskSettings.isZenMode ? '退出沉浸全屏' : '全屏纯净沉浸码字'}
-          >
-            {deskSettings.isZenMode ? <Minimize2 className="w-3.5 h-3.5 text-purple-400" /> : <Maximize2 className="w-3.5 h-3.5 text-slate-300" />}
-          </button>
+          <button onClick={() => changePreferences({ isZenMode: !deskSettings.isZenMode })} className={toolClass} aria-label={deskSettings.isZenMode ? '退出专注模式' : '进入专注模式'} aria-pressed={deskSettings.isZenMode}>{deskSettings.isZenMode ? <Minimize2 className={iconClass} /> : <Maximize2 className={iconClass} />}</button>
         </div>
+      </header>
+
+      <div className={`desk-body flex min-h-0 flex-1 flex-col xl:flex-row ${deskSettings.isZenMode ? 'overflow-y-auto xl:overflow-hidden' : ''}`}>
+        <aside id="desk-chapter-list" aria-label="章节目录" className={`desk-chapter-sidebar shrink-0 border-b border-[var(--desk-border)] bg-[var(--desk-surface)] p-4 xl:w-56 xl:border-b-0 xl:border-r ${showChapterList ? 'block' : 'hidden xl:block'} ${deskSettings.isZenMode ? 'xl:overflow-y-auto' : ''}`}>
+          <div className="mb-4 flex items-center justify-between"><div><h4 className="text-xs font-semibold">作品目录</h4><p className="mt-1.5 text-[10px] text-[var(--desk-muted)]">{project.chapters.length} 章 · {totalWords.toLocaleString()} 字</p></div><button onClick={handleCreateChapter} aria-label="新建章节" title="新建章节" className={`${toolClass} !px-2`}><Plus className={iconClass} /></button></div>
+          <nav aria-label="选择写作章节" className="max-h-80 space-y-1.5 overflow-y-auto xl:max-h-[650px]">
+            {project.chapters.map(chapter => { const selected = chapter.id === currentChapter?.id; return <button key={chapter.id} onClick={() => { setActiveChapterId(chapter.id); setShowChapterList(false); }} aria-current={selected ? 'page' : undefined} className={`desk-chapter flex w-full items-start gap-2 rounded-lg border p-2.5 text-left ${selected ? 'border-[var(--desk-border)] bg-black/10' : 'border-transparent hover:bg-black/5'}`}><span className="mt-0.5 shrink-0 font-mono text-[10px] text-[var(--desk-muted)]">{String(chapter.chapterNumber).padStart(2, '0')}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{chapter.title || '未命名章节'}</span><span className="mt-1.5 block text-[10px] text-[var(--desk-muted)]">{chapter.wordCount.toLocaleString()} 字 · {chapter.status === 'final' ? '定稿' : chapter.status === 'audited' ? '已审阅' : '草稿'}</span></span>{selected && <ChevronRight className="mt-0.5 h-3 w-3 shrink-0 text-[var(--desk-accent)]" />}</button>; })}
+            {project.chapters.length === 0 && <p className="py-5 text-center text-xs text-[var(--desk-muted)]">故事从第一章开始。</p>}
+          </nav>
+          <div className="mt-6 border-t border-[var(--desk-border)] pt-4"><span className="flex items-center gap-2 text-[10px] text-[var(--desk-muted)]"><Target className={iconClass} />今日写作目标</span><div className="mt-2 flex items-baseline gap-1"><strong className="font-mono text-lg font-medium text-[var(--desk-accent)]">{deskSettings.currentSessionWords.toLocaleString()}</strong><span className="text-[10px] text-[var(--desk-muted)]">/ {deskSettings.targetDailyWords.toLocaleString()} 字</span></div><div className="mt-3 h-1 overflow-hidden rounded-full bg-black/15" role="progressbar" aria-label="今日写作进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressRatio}><div className="h-full rounded-full bg-[var(--desk-accent)]" style={{ width: `${progressRatio}%` }} /></div></div>
+        </aside>
+
+        <div className="desk-manuscript min-w-0 flex-1 xl:overflow-y-auto">
+          <div className="desk-editor-actions flex flex-wrap items-center justify-between gap-2 border-b border-[var(--desk-border)] px-4 py-2.5 sm:px-7"><span className="text-[10px] text-[var(--desk-muted)]">{currentChapter ? `第 ${currentChapter.volumeNumber} 卷 / 第 ${currentChapter.chapterNumber} 章` : '准备开启新篇章'}</span><div className="flex flex-wrap items-center gap-1.5"><button onClick={() => handleAIPolishSnippet('polish')} disabled={!currentChapter || isAIAssisting} className={toolClass} title="润色选中文字，未选择时润色末尾段落">{isAIAssisting ? <RefreshCw className={`${iconClass} animate-spin`} /> : <Wand2 className={iconClass} />}润色</button><button onClick={() => handleAIPolishSnippet('expand')} disabled={!currentChapter || isAIAssisting} className={`${toolClass} text-[var(--desk-accent)]`}><Sparkles className={iconClass} />续写</button><button onClick={handleFormatIndent} disabled={!currentChapter} className={toolClass}><AlignLeft className={iconClass} />排版</button></div></div>
+          {assistantNotice && <div className="desk-assistant-notice mx-4 mt-4 rounded-lg border border-[var(--desk-border)] bg-[var(--desk-surface)] p-3 text-xs sm:mx-7"><div className="flex items-start justify-between gap-3"><p role="status" className="leading-relaxed">{assistantNotice}</p>{!isAIAssisting && <button onClick={() => { setAssistantNotice(''); setPendingAIText(''); }} aria-label="关闭灵感提示" className="shrink-0 rounded p-0.5"><X className={iconClass} /></button>}</div>{pendingAIText && <details className="mt-2"><summary className="cursor-pointer text-[var(--desk-accent)]">查看并选取生成文字</summary><textarea aria-label="保留的 AI 生成文字" readOnly value={pendingAIText} className="mt-2 min-h-40 w-full rounded-lg border border-[var(--desk-border)] bg-[var(--desk-bg)] p-3 font-serif leading-relaxed text-inherit" /></details>}</div>}
+          {currentChapter ? <div className="desk-writing-sheet mx-auto flex min-h-[580px] w-full max-w-3xl flex-col px-5 pb-10 pt-9 sm:px-10 sm:pt-12">
+            <label className="mb-3 text-[10px] tracking-[0.2em] text-[var(--desk-muted)]" htmlFor="desk-chapter-title">章节标题</label>
+            <input id="desk-chapter-title" value={currentChapter.title} onChange={event => { const latest = latestProject.current; commitProject({ ...latest, chapters: latest.chapters.map(chapter => chapter.id === currentChapter.id ? { ...chapter, title: event.target.value, updatedAt: new Date().toISOString() } : chapter) }); }} className="desk-title w-full border-0 border-b border-transparent bg-transparent pb-5 font-serif text-2xl font-medium leading-relaxed text-inherit outline-none sm:text-[28px]" placeholder="给这一章起个名字…" />
+            <div className="mb-7 mt-3 flex items-center gap-2 text-[10px] text-[var(--desk-muted)]"><span className="h-1 w-1 rounded-full bg-[var(--desk-accent)]" />{currentChapter.status === 'final' ? '定稿' : '创作中'}<span className="px-1 opacity-40">·</span>{currentChapter.wordCount.toLocaleString()} 字</div>
+            <textarea ref={textareaRef} aria-label="章节正文" value={currentChapter.content} onChange={event => handleContentChange(event.target.value)} placeholder="把光标停在这里，让故事慢慢开始…" className={`desk-content min-h-[420px] w-full flex-1 resize-y border-0 bg-transparent pb-24 text-inherit outline-none ${deskSettings.fontFamily === 'sans' ? 'font-sans' : 'font-serif'}`} style={{ fontSize: `${deskSettings.fontSize}px`, lineHeight: deskSettings.lineHeight }} spellCheck={false} />
+          </div> : <div className="desk-empty flex min-h-[540px] flex-col items-center justify-center px-6 text-center"><span className="mb-6 grid h-16 w-16 place-items-center rounded-2xl border border-[var(--desk-border)] text-[var(--desk-accent)]"><Feather className="h-7 w-7" /></span><h3 className="font-serif text-2xl">每个故事，都有第一行</h3><p className="mt-3 max-w-xs text-xs leading-6 text-[var(--desk-muted)]">新建第一章，记下脑海里的人物、场景，或一个尚未成形的念头。</p><button onClick={handleCreateChapter} className="mt-6 inline-flex min-h-10 items-center gap-2 rounded-lg bg-[var(--desk-accent)] px-5 text-xs font-semibold text-[var(--desk-bg)]"><Plus className="h-4 w-4" />创建第一章</button></div>}
+        </div>
+
+        {isSplitReferenceOpen && <aside aria-label="对照素材" className="desk-reference flex max-h-[450px] min-w-0 shrink-0 flex-col border-t border-[var(--desk-border)] bg-[var(--desk-surface)] text-xs xl:max-h-none xl:w-72 xl:border-l xl:border-t-0 2xl:w-80"><div className="flex items-center justify-between border-b border-[var(--desk-border)] p-4"><h4 className="flex items-center gap-2 font-semibold"><BookOpen className={iconClass} />对照素材</h4><button onClick={() => setIsSplitReferenceOpen(false)} className="rounded p-1" aria-label="关闭对照素材"><X className={iconClass} /></button></div><label className="p-3"><span className="sr-only">参考文献</span><select value={reference?.id || ''} onChange={event => setReferenceId(event.target.value)} className="w-full rounded-lg border border-[var(--desk-border)] bg-[var(--desk-bg)] p-2 text-inherit">{!reference && <option value="">暂无参考文献</option>}{(project.referenceDocs || []).map(doc => <option key={doc.id} value={doc.id}>{doc.title} ({doc.format.toUpperCase()})</option>)}</select></label><div className="flex-1 overflow-y-auto whitespace-pre-line p-4 font-serif text-[13px] leading-7">{reference?.parsedChapters?.[0]?.content || '在文献库导入资料，即可边阅读、边创作。'}</div>{!reference && <button onClick={onOpenDocumentLibrary} className="m-4 rounded-lg border border-[var(--desk-border)] p-2 text-[var(--desk-accent)]">打开文献库</button>}</aside>}
       </div>
 
-      {/* Main Workspace */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left: Typing Desk Canvas */}
-        <div className="flex-1 flex flex-col p-4 sm:p-10 max-w-4xl mx-auto w-full overflow-y-auto">
-          {currentChapter ? (
-            <div className="space-y-4 flex-1 flex flex-col">
-              {/* Chapter Title Edit */}
-              <input
-                type="text"
-                value={currentChapter.title}
-                onChange={e => {
-                  const updatedChapters = project.chapters.map(ch => 
-                    ch.id === currentChapter.id ? { ...ch, title: e.target.value } : ch
-                  );
-                  onUpdateProject({ ...project, chapters: updatedChapters });
-                }}
-                className="text-2xl sm:text-3xl font-serif font-bold bg-transparent border-b border-transparent hover:border-slate-700/50 focus:border-purple-500 outline-none w-full pb-2 tracking-wide"
-                placeholder="在此输入章节名..."
-              />
-
-              {/* Main Typing Textarea */}
-              <textarea
-                ref={textareaRef}
-                value={currentChapter.content}
-                onChange={e => handleContentChange(e.target.value)}
-                placeholder="静心凝神，开始您的创作... (支持打字机滚动模式)"
-                className="flex-1 w-full bg-transparent outline-none resize-none font-serif leading-loose text-justify transition select-text pb-40"
-                style={{
-                  fontSize: `${deskSettings.fontSize}px`,
-                  lineHeight: deskSettings.lineHeight,
-                }}
-              />
-            </div>
-          ) : (
-            <div className="p-12 text-center opacity-60">请先在目录中选择章节</div>
-          )}
-        </div>
-
-        {/* Right Split Reference Drawer */}
-        {isSplitReferenceOpen && (
-          <div className={`w-80 sm:w-96 border-l ${currentTheme.border} ${currentTheme.card} flex flex-col overflow-hidden text-xs shadow-xl animate-in slide-in-from-right`}>
-            <div className="p-3 border-b border-slate-800 flex items-center justify-between">
-              <span className="font-semibold flex items-center gap-1.5">
-                <BookOpen className="w-3.5 h-3.5 text-purple-400" />
-                对照素材视窗
-              </span>
-              <button 
-                onClick={() => setIsSplitReferenceOpen(false)}
-                className="p-1 hover:bg-black/20 rounded"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="p-2 border-b border-slate-800/80">
-              <select
-                value={splitDocPreview?.id || ''}
-                onChange={e => {
-                  const found = project.referenceDocs?.find(d => d.id === e.target.value);
-                  if (found) setSplitDocPreview(found);
-                }}
-                className="w-full bg-black/20 border border-slate-800 rounded p-1.5 text-xs outline-none"
-              >
-                {(project.referenceDocs || []).map(doc => (
-                  <option key={doc.id} value={doc.id} className="bg-slate-900 text-slate-100">
-                    {doc.title} ({doc.format.toUpperCase()})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-3 font-serif leading-relaxed text-slate-300 select-text whitespace-pre-line text-[13px]">
-              {splitDocPreview?.parsedChapters?.[0]?.content || '暂无可参考的文字内容，请在书架中导入 TXT 或 EPUB'}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Bottom Real-time Writer Statistics Bar */}
-      <div className={`px-4 sm:px-6 py-2 border-t ${currentTheme.border} ${currentTheme.card} backdrop-blur-md flex flex-wrap items-center justify-between gap-3 text-xs font-mono select-none`}>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <span className="flex items-center gap-1 font-semibold text-purple-300">
-              <Target className="w-3.5 h-3.5" />
-              本日进度: {deskSettings.currentSessionWords} / {deskSettings.targetDailyWords} 字
-            </span>
-            <div className="w-16 h-1.5 bg-black/30 rounded-full overflow-hidden hidden sm:block">
-              <div className="h-full bg-purple-500 rounded-full transition-all duration-300" style={{ width: `${progressRatio}%` }}></div>
-            </div>
-          </div>
-
-          <span className="opacity-80">本章: <strong className="text-white">{currentWords}</strong> 字</span>
-          <span className="hidden sm:inline opacity-80">全书: <strong className="text-white">{project.chapters.reduce((a,c) => a + c.wordCount, 0)}</strong> 字</span>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1 bg-black/20 rounded p-0.5">
-            <button 
-              onClick={() => setDeskSettings(s => ({ ...s, fontSize: Math.max(14, s.fontSize - 1) }))}
-              className="px-1.5 py-0.5 hover:bg-black/30 rounded"
-              title="缩小字号"
-            >
-              A-
-            </button>
-            <span className="px-1">{deskSettings.fontSize}px</span>
-            <button 
-              onClick={() => setDeskSettings(s => ({ ...s, fontSize: Math.min(28, s.fontSize + 1) }))}
-              className="px-1.5 py-0.5 hover:bg-black/30 rounded"
-              title="放大字号"
-            >
-              A+
-            </button>
-          </div>
-
-          <span className="opacity-60 hidden md:inline">{project.currentSimulationTime}</span>
-        </div>
-      </div>
-    </div>
+      <footer className="desk-statusbar flex flex-wrap items-center justify-between gap-3 border-t border-[var(--desk-border)] bg-[var(--desk-surface)] px-4 py-3 text-[10px] sm:px-5"><span className="text-[var(--desk-muted)]">本章 <strong className="font-mono font-medium text-[var(--desk-text)]">{(currentChapter?.wordCount || 0).toLocaleString()}</strong> 字<span className="mx-3 opacity-30">|</span>全书 <strong className="font-mono font-medium text-[var(--desk-text)]">{totalWords.toLocaleString()}</strong> 字</span><div className="flex items-center gap-3"><span className="hidden text-[var(--desk-muted)] sm:inline">{deskSettings.isZenMode ? 'Esc 退出专注' : '安心写作，随时停笔'}</span><div className="flex items-center gap-1 rounded-lg border border-[var(--desk-border)] p-0.5"><button onClick={() => changePreferences({ fontSize: Math.max(14, deskSettings.fontSize - 1) })} disabled={deskSettings.fontSize <= 14} className="min-h-7 min-w-7 rounded px-1.5 hover:bg-black/10 disabled:opacity-40" aria-label="缩小正文字号">A−</button><span className="px-1 font-mono">{deskSettings.fontSize}</span><button onClick={() => changePreferences({ fontSize: Math.min(28, deskSettings.fontSize + 1) })} disabled={deskSettings.fontSize >= 28} className="min-h-7 min-w-7 rounded px-1.5 hover:bg-black/10 disabled:opacity-40" aria-label="放大正文字号">A+</button></div></div></footer>
+    </section>
   );
 };

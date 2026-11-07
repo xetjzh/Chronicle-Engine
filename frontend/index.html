@@ -3,44 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Chronicle Engine | 编年引擎 · 私人创作与自主模拟工作站</title>
+  <meta name="theme-color" content="#131715">
+  <meta name="description" content="编年引擎：专注写作、构筑世界、记录人物，让每个故事有迹可循。">
+  <title>Chronicle Engine · 编年创作工作台</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;800&family=Noto+Serif+SC:wght@300;400;600;700&display=swap" rel="stylesheet">
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            brand: {
-              50: '#faf5ff',
-              100: '#f3e8ff',
-              400: '#c084fc',
-              500: '#a855f7',
-              600: '#9333ea',
-              700: '#7e22ce',
-              900: '#581c87',
-              950: '#2e1065',
-            }
-          },
-          fontFamily: {
-            serif: ['"Noto Serif SC"', 'STSong', 'Songti SC', 'SimSun', 'serif'],
-            display: ['Cinzel', '"Noto Serif SC"', 'serif'],
-            sans: ['system-ui', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', '"PingFang SC"', '"Microsoft YaHei"', 'sans-serif'],
-            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace']
-          }
-        }
-      }
-    }
-  </script>
     <style>
-    /* Premium dark scrollbars */
+    /* Warm archive scrollbars */
     ::-webkit-scrollbar { width: 5px; height: 5px; }
-    ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.4); }
-    ::-webkit-scrollbar-thumb { background: rgba(168, 85, 247, 0.28); border-radius: 9999px; }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(168, 85, 247, 0.55); }
+    ::-webkit-scrollbar-track { background: rgba(20, 20, 19, 0.5); }
+    ::-webkit-scrollbar-thumb { background: rgba(197, 158, 95, 0.3); border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(197, 158, 95, 0.5); }
 
     /* Typewriter caret animation */
     @keyframes pulse-subtle {
@@ -50,7 +24,7 @@
     .animate-caret { animation: pulse-subtle 1.2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
   </style>
 </head>
-<body class="bg-slate-950 text-slate-100 antialiased selection:bg-purple-500/30 selection:text-purple-200 min-h-screen overflow-x-hidden">
+<body class="bg-slate-950 text-slate-100 antialiased selection:bg-purple-400/25 selection:text-purple-100 min-h-screen">
   <div id="root"></div>
   <script type="module" src="index.tsx"></script>
 </body>

@@ -1,3 +1,4 @@
+import { Dialog } from './Dialog';
 import React, { useState } from 'react';
 import { ProjectData, Character } from '../types';
 import { AIProviderService } from '../services/aiProviderService';
@@ -14,6 +15,7 @@ export const CharacterCardGeneratorModal: React.FC<CharacterCardGeneratorModalPr
   onAddCharacter,
   onClose,
 }) => {
+  const dialogTitleId = React.useId();
   const [briefPrompt, setBriefPrompt] = useState('寒江关守城卫所的一名年迈仵作，暗中受九瓣青莲商号接济，精通边关百草毒物，性格孤僻胆小。');
   const [isGenerating, setIsGenerating] = useState(false);
 
@@ -95,20 +97,19 @@ export const CharacterCardGeneratorModal: React.FC<CharacterCardGeneratorModalPr
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 text-slate-200 shadow-2xl space-y-4 text-xs">
+    <Dialog onClose={onClose} titleId={dialogTitleId} className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4" panelClassName="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 text-slate-200 shadow-2xl space-y-4 text-xs">
         <div className="flex items-center justify-between border-b border-slate-800 pb-3">
           <div className="flex items-center gap-2">
             <UserPlus className="w-5 h-5 text-purple-400" />
-            <h3 className="text-sm font-bold text-white">AI 智能人物卡速构仪</h3>
+            <h3 id={dialogTitleId} className="text-sm font-bold text-white">创建人物</h3>
           </div>
-          <button onClick={onClose} className="p-1 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white">
+          <button onClick={onClose} aria-label="关闭对话框" className="shrink-0 p-1 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white">
             <X className="w-5 h-5" />
           </button>
         </div>
 
         <p className="text-slate-400 leading-relaxed">
-          输入几句人物灵感，AI 将自动推演其价值观阵营、心理恐惧、随身行囊与即时目标，并无缝注入世界模拟因果网。
+          写下人物灵感，生成包含性格、动机、随身物品与当前目标的人物档案。
         </p>
 
         <div>
@@ -118,6 +119,7 @@ export const CharacterCardGeneratorModal: React.FC<CharacterCardGeneratorModalPr
             value={briefPrompt}
             onChange={e => setBriefPrompt(e.target.value)}
             placeholder="例如：一位来自江南的落魄琴师，在黑石城以修琴为生，秘密受雇于都巡检司..."
+            aria-label="人物灵感"
             className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white outline-none focus:border-purple-500 leading-relaxed font-serif"
           />
         </div>
@@ -138,7 +140,6 @@ export const CharacterCardGeneratorModal: React.FC<CharacterCardGeneratorModalPr
             <span>{isGenerating ? '因果推演生成中...' : '生成完整人物档案'}</span>
           </button>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 };

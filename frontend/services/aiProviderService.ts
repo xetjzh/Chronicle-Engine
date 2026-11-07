@@ -1,4 +1,3 @@
-import { GoogleGenAI } from '@google/genai';
 import { AIProviderConfig, AIProviderType, SamplingParams } from '../types';
 
 export interface GenerateTextOptions {
@@ -72,6 +71,7 @@ export class AIProviderService {
     config: AIProviderConfig,
     options: GenerateTextOptions
   ): Promise<string> {
+    const { GoogleGenAI } = await import('@google/genai');
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY, vertexai: true });
     
     const sampling = { ...config.sampling, ...options.overrideSampling };
@@ -268,6 +268,7 @@ export class AIProviderService {
     const start = performance.now();
     try {
       if (provider === 'gemini') {
+        const { GoogleGenAI } = await import('@google/genai');
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY, vertexai: true });
         const res = await ai.models.generateContent({
           model: 'gemini-2.5-flash',

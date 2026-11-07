@@ -1,12 +1,14 @@
+import { Dialog } from './Dialog';
+import { getNarrativeTension } from './narrativeAnalytics';
 import React, { useMemo } from 'react';
 import { ProjectData } from '../types';
-import { 
-  X, Activity, TrendingUp, BarChart3, Users, Zap, BookOpen, 
+import {
+  X, Activity, TrendingUp, BarChart3, Users, Zap, BookOpen,
   Layers, CheckCircle, ShieldAlert
 } from 'lucide-react';
-import { 
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, 
-  ResponsiveContainer, CartesianGrid, AreaChart, Area 
+import {
+  LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip,
+  ResponsiveContainer, CartesianGrid, AreaChart, Area
 } from 'recharts';
 
 interface NarrativeAnalyticsModalProps {
@@ -18,13 +20,14 @@ export const NarrativeAnalyticsModal: React.FC<NarrativeAnalyticsModalProps> = (
   project,
   onClose,
 }) => {
+  const dialogTitleId = React.useId();
   // Compute Tension & Length data per chapter
   const tensionData = useMemo(() => {
-    return project.chapters.map((ch, idx) => ({
+    return project.chapters.map(ch => ({
       name: `第${ch.chapterNumber}章`,
       chapterNumber: ch.chapterNumber,
       title: ch.title,
-      tension: ch.extraction?.tensionScore || ch.tensionScore || (idx % 3 === 2 ? 80 : idx % 3 === 1 ? 65 : 45),
+      tension: getNarrativeTension(ch),
       wordCount: ch.wordCount,
       target: 4000,
     }));
@@ -51,31 +54,28 @@ export const NarrativeAnalyticsModal: React.FC<NarrativeAnalyticsModalProps> = (
 
   const totalWords = project.chapters.reduce((a, c) => a + c.wordCount, 0);
   const avgWords = project.chapters.length > 0 ? Math.round(totalWords / project.chapters.length) : 0;
-  const avgTension = tensionData.length > 0 
-    ? Math.round(tensionData.reduce((a, c) => a + c.tension, 0) / tensionData.length) 
-    : 0;
+  const scoredTensions = tensionData.map(chapter => chapter.tension).filter((score): score is number => score !== null);
+  const avgTension = scoredTensions.length > 0
+    ? Math.round(scoredTensions.reduce((total, score) => total + score, 0) / scoredTensions.length)
+    : null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-5xl w-full h-[88vh] flex flex-col text-slate-200 overflow-hidden shadow-2xl">
+    <Dialog onClose={onClose} titleId={dialogTitleId} className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200" panelClassName="bg-slate-900 border border-slate-800 rounded-2xl max-w-5xl w-full h-[88vh] flex flex-col text-slate-200 overflow-hidden shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-800 px-6 py-4 bg-slate-950/70">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-purple-600 via-indigo-600 to-pink-500 flex items-center justify-center shadow-md shadow-purple-500/20">
+            <div className="w-8 h-8 rounded-xl bg-purple-600 flex items-center justify-center shadow-md shadow-purple-500/20">
               <Activity className="w-4 h-4 text-white" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                全书叙事张力与节奏分析图谱 (Narrative Analytics)
-                <span className="text-[10px] font-mono text-purple-300 bg-purple-950 px-2 py-0.5 rounded border border-purple-800">
-                  开源 StoryMetrics 移植引擎
-                </span>
+              <h3 id={dialogTitleId} className="text-base font-bold text-white flex flex-wrap items-center gap-2">
+                叙事分析
               </h3>
-              <p className="text-xs text-slate-400">实时监测长篇起伏波峰波谷、字数达标率与主要角色戏份分布，防止长篇审美疲劳</p>
+              <p className="text-xs text-slate-400">查看章节篇幅、叙事张力与人物出场分布。</p>
             </div>
           </div>
 
-          <button onClick={onClose} className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition">
+          <button onClick={onClose} aria-label="关闭对话框" className="shrink-0 p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -108,7 +108,7 @@ export const NarrativeAnalyticsModal: React.FC<NarrativeAnalyticsModalProps> = (
               平均戏剧张力
             </div>
             <div className="text-lg font-bold font-mono text-purple-300 mt-1">
-              {avgTension} <span className="text-xs text-slate-400 font-normal">/ 100 (张力均衡)</span>
+              {avgTension ?? '暂无评分'} {avgTension !== null && <span className="text-xs text-slate-400 font-normal">/ 100 · {scoredTensions.length} 章已评分</span>}
             </div>
           </div>
 
@@ -133,7 +133,7 @@ export const NarrativeAnalyticsModal: React.FC<NarrativeAnalyticsModalProps> = (
                   <TrendingUp className="w-4 h-4 text-purple-400" />
                   章节戏剧张力起伏波浪线 (Narrative Tension Wave)
                 </h4>
-                <p className="text-[11px] text-slate-400">波峰代表高潮交锋/突变，波谷代表日常铺垫与心境沉淀；理想长篇应呈现波浪式递进。</p>
+                <p className="text-[11px] text-slate-400">波峰代表冲突，波谷代表铺垫。未评分章节留空，平均值仅统计已有评分。</p>
               </div>
               <span className="text-[11px] text-purple-300 font-mono">0 (平静) ~ 100 (决战)</span>
             </div>
@@ -143,18 +143,18 @@ export const NarrativeAnalyticsModal: React.FC<NarrativeAnalyticsModalProps> = (
                 <AreaChart data={tensionData}>
                   <defs>
                     <linearGradient id="tensionGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#a855f7" stopOpacity={0.4}/>
-                      <stop offset="95%" stopColor="#a855f7" stopOpacity={0.0}/>
+                      <stop offset="5%" stopColor="#d0ad70" stopOpacity={0.4}/>
+                      <stop offset="95%" stopColor="#d0ad70" stopOpacity={0.0}/>
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                  <XAxis dataKey="name" stroke="#64748b" tick={{ fontSize: 10 }} />
-                  <YAxis domain={[0, 100]} stroke="#64748b" tick={{ fontSize: 10 }} />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '12px' }}
-                    labelStyle={{ color: '#e2e8f0', fontWeight: 'bold' }}
+                  <CartesianGrid strokeDasharray="3 3" stroke="#30332f" />
+                  <XAxis dataKey="name" stroke="#96958c" tick={{ fontSize: 10 }} />
+                  <YAxis domain={[0, 100]} stroke="#96958c" tick={{ fontSize: 10 }} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#131715', borderColor: '#444643', borderRadius: '8px', fontSize: '12px' }}
+                    labelStyle={{ color: '#e1dbcf', fontWeight: 'bold' }}
                   />
-                  <Area type="monotone" dataKey="tension" stroke="#c084fc" strokeWidth={2.5} fillOpacity={1} fill="url(#tensionGrad)" />
+                  <Area type="monotone" dataKey="tension" stroke="#dfc38e" strokeWidth={2.5} fillOpacity={1} fill="url(#tensionGrad)" />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -171,11 +171,11 @@ export const NarrativeAnalyticsModal: React.FC<NarrativeAnalyticsModalProps> = (
               <div className="h-44 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={tensionData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                    <XAxis dataKey="name" stroke="#64748b" tick={{ fontSize: 10 }} />
-                    <YAxis stroke="#64748b" tick={{ fontSize: 10 }} />
-                    <Tooltip 
-                      contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '12px' }}
+                    <CartesianGrid strokeDasharray="3 3" stroke="#30332f" />
+                    <XAxis dataKey="name" stroke="#96958c" tick={{ fontSize: 10 }} />
+                    <YAxis stroke="#96958c" tick={{ fontSize: 10 }} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#131715', borderColor: '#444643', borderRadius: '8px', fontSize: '12px' }}
                     />
                     <Bar dataKey="wordCount" fill="#10b981" radius={[4, 4, 0, 0]} />
                   </BarChart>
@@ -192,13 +192,13 @@ export const NarrativeAnalyticsModal: React.FC<NarrativeAnalyticsModalProps> = (
               <div className="h-44 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={characterPresence} layout="vertical">
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                    <XAxis type="number" stroke="#64748b" tick={{ fontSize: 10 }} />
-                    <YAxis type="category" dataKey="name" stroke="#64748b" tick={{ fontSize: 11 }} />
-                    <Tooltip 
-                      contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '12px' }}
+                    <CartesianGrid strokeDasharray="3 3" stroke="#30332f" />
+                    <XAxis type="number" stroke="#96958c" tick={{ fontSize: 10 }} />
+                    <YAxis type="category" dataKey="name" stroke="#96958c" tick={{ fontSize: 11 }} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#131715', borderColor: '#444643', borderRadius: '8px', fontSize: '12px' }}
                     />
-                    <Bar dataKey="appearances" fill="#6366f1" radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="appearances" fill="#d0ad70" radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -215,7 +215,6 @@ export const NarrativeAnalyticsModal: React.FC<NarrativeAnalyticsModalProps> = (
             完成查看
           </button>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 };

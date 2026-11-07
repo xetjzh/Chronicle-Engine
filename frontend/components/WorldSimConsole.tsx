@@ -36,7 +36,6 @@ export const WorldSimConsole: React.FC<WorldSimConsoleProps> = ({
   const handleStepHours = (hours: number) => {
     const { updatedProject, newEvents } = SimulationEngine.stepTime(project, hours);
     onUpdateProject(updatedProject);
-    storageService.saveProject(updatedProject);
     if (newEvents.length > 0) {
       setSelectedEvent(newEvents[newEvents.length - 1]);
       showToast(`推进成功！产生了 ${newEvents.length} 起新历史事件。`);
@@ -288,10 +287,12 @@ export const WorldSimConsole: React.FC<WorldSimConsoleProps> = ({
               const isSelected = selectedEvent?.id === evt.id;
               const loc = project.locations.find(l => l.id === evt.locationId);
               return (
-                <div
+                <button
+                  type="button"
                   key={evt.id}
                   onClick={() => setSelectedEvent(evt)}
-                  className={`p-3.5 rounded-xl border cursor-pointer transition text-xs relative ${
+                  aria-pressed={isSelected}
+                  className={`block w-full text-left p-3.5 rounded-xl border cursor-pointer transition text-xs relative ${
                     isSelected 
                       ? 'bg-purple-950/30 border-purple-500 shadow-md' 
                       : 'bg-slate-900 border-slate-800 hover:border-slate-700'
@@ -317,7 +318,7 @@ export const WorldSimConsole: React.FC<WorldSimConsoleProps> = ({
                       </span>
                     )}
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>

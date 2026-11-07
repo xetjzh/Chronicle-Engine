@@ -1,10 +1,11 @@
+import { Dialog } from './Dialog';
+import { filterDocumentChapters } from './documentLibrarySearch';
 import React, { useState } from 'react';
 import { ProjectData, ImportedDocument, DocumentExcerpt, LorebookEntry } from '../types';
 import { DocumentParserService } from '../services/documentParserService';
 import { AIProviderService } from '../services/aiProviderService';
-import { storageService } from '../services/storageService';
-import { 
-  X, FileText, Upload, BookOpen, Trash2, Copy, Check, 
+import {
+  X, FileText, Upload, BookOpen, Trash2, Copy, Check,
   Search, ExternalLink, Eye, ChevronRight, FileCode, Layers,
   BookmarkPlus, Sparkles, Wand2, Tag, BookMarked, MessageSquareText,
   Highlighter, RefreshCw, ArrowRight, CornerDownRight, Quote
@@ -25,6 +26,7 @@ export const DocumentLibraryModal: React.FC<DocumentLibraryModalProps> = ({
   onInsertReferenceSnippet,
   onConvertToLorebook,
 }) => {
+  const dialogTitleId = React.useId();
   const [selectedDocId, setSelectedDocId] = useState<string>(project.referenceDocs?.[0]?.id || '');
   const [selectedChapterIdx, setSelectedChapterIdx] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -32,6 +34,7 @@ export const DocumentLibraryModal: React.FC<DocumentLibraryModalProps> = ({
   const [activeTab, setActiveTab] = useState<'READER' | 'EXCERPTS' | 'AI_PROBE'>('READER');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
+  const [mobilePane, setMobilePane] = useState<'SHELF' | 'CONTENTS' | 'READER'>('SHELF');
 
   // Reader Themes (Foliate / Calibre ported)
   const [readerTheme, setReaderTheme] = useState<'ink' | 'sepia' | 'emerald' | 'paper'>('ink');
@@ -82,7 +85,6 @@ export const DocumentLibraryModal: React.FC<DocumentLibraryModalProps> = ({
 
       const updated = { ...project, referenceDocs: newDocs };
       onUpdateProject(updated);
-      storageService.saveProject(updated);
       if (newDocs[0]) {
         setSelectedDocId(newDocs[0].id);
         setSelectedChapterIdx(0);
@@ -100,7 +102,6 @@ export const DocumentLibraryModal: React.FC<DocumentLibraryModalProps> = ({
     const filtered = docs.filter(d => d.id !== id);
     const updated = { ...project, referenceDocs: filtered };
     onUpdateProject(updated);
-    storageService.saveProject(updated);
     if (selectedDocId === id) {
       setSelectedDocId(filtered[0]?.id || '');
       setSelectedChapterIdx(0);
@@ -136,13 +137,12 @@ export const DocumentLibraryModal: React.FC<DocumentLibraryModalProps> = ({
     };
 
     const docExcerpts = currentDoc.excerpts || [];
-    const updatedDocs = docs.map(d => 
+    const updatedDocs = docs.map(d =>
       d.id === currentDoc.id ? { ...d, excerpts: [card, ...docExcerpts] } : d
     );
 
     const updated = { ...project, referenceDocs: updatedDocs };
     onUpdateProject(updated);
-    storageService.saveProject(updated);
 
     setHighlightSelection('');
     setNewCardNote('');
@@ -170,7 +170,6 @@ export const DocumentLibraryModal: React.FC<DocumentLibraryModalProps> = ({
       const updatedLore = [...project.lorebook, newLore];
       const updated = { ...project, lorebook: updatedLore };
       onUpdateProject(updated);
-      storageService.saveProject(updated);
     }
     alert(`成功！已将卡片转录为世界书词条【${newLore.name}】，触发词: [${newLore.keys.join(', ')}]`);
   };
@@ -207,13 +206,11 @@ ${query}
   };
 
   // Filter docs by category
-  const filteredDocs = docs.filter(d => 
+  const filteredDocs = docs.filter(d =>
     selectedCategory === 'all' || d.category === selectedCategory
   );
 
-  const filteredChapters = currentDoc?.parsedChapters?.filter(c => 
-    !searchQuery.trim() || c.title.includes(searchQuery) || c.content.includes(searchQuery)
-  ) || [];
+  const filteredChapters = filterDocumentChapters(currentDoc?.parsedChapters || [], searchQuery);
 
   const allExcerpts = (currentDoc?.excerpts || []);
 
@@ -225,48 +222,53 @@ ${query}
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-6xl w-full h-[92vh] flex flex-col text-slate-200 overflow-hidden shadow-2xl">
+    <Dialog onClose={onClose} titleId={dialogTitleId} className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200" panelClassName="bg-slate-900 border border-slate-800 rounded-2xl max-w-6xl w-full h-[92vh] flex flex-col text-slate-200 overflow-hidden shadow-2xl">
         {/* Top Header */}
-        <div className="flex items-center justify-between border-b border-slate-800 px-6 py-3.5 bg-slate-950/80">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-4 sm:px-6 py-3.5 bg-slate-950/80 shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-purple-600 via-indigo-600 to-pink-500 flex items-center justify-center shadow-md shadow-purple-500/20">
+            <div className="w-8 h-8 rounded-xl bg-purple-600 flex items-center justify-center shadow-md shadow-purple-500/20">
               <BookOpen className="w-4 h-4 text-white" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                作者多源参考书架与文献查阅台
-                <span className="text-xs font-normal text-purple-300 bg-purple-950 px-2 py-0.5 rounded border border-purple-800 font-mono">
-                  开源 Foliate + Zotero 移植
-                </span>
+              <h3 id={dialogTitleId} className="text-base font-bold text-white flex flex-wrap items-center gap-2">
+                参考文献
               </h3>
-              <p className="text-xs text-slate-400">TXT/EPUB/PDF 兼容 · 闪念考据卡片盒 · AI文献探针 · 一键转录世界书</p>
+              <p className="text-xs text-slate-400">查阅资料、整理摘录，为故事补充可信细节。</p>
             </div>
           </div>
 
           <div className="flex items-center gap-2.5">
-            <label className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow">
+            <label className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow focus-within:ring-2 focus-within:ring-purple-300">
               <Upload className="w-3.5 h-3.5" />
               <span>{isUploading ? '解析中...' : '导入本地书籍 / 资料'}</span>
-              <input 
-                type="file" 
-                multiple 
-                accept=".txt,.md,.epub,.pdf" 
-                onChange={handleFileUpload} 
-                className="hidden" 
+              <input
+                type="file"
+                multiple
+                accept=".txt,.md,.epub,.pdf"
+                onChange={handleFileUpload}
+                className="sr-only"
                 disabled={isUploading}
               />
             </label>
-            <button onClick={onClose} className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition">
+            <button onClick={onClose} aria-label="关闭对话框" className="shrink-0 p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition">
               <X className="w-5 h-5" />
             </button>
           </div>
         </div>
 
+        <nav aria-label="文献工作区" className="grid grid-cols-3 gap-2 p-3 border-b border-slate-800 md:hidden shrink-0 text-xs">
+          {([['SHELF', '书架'], ['CONTENTS', '目录'], ['READER', '正文与摘录']] as const).map(([pane, label]) => (
+            <button key={pane} type="button" aria-pressed={mobilePane === pane} onClick={() => setMobilePane(pane)}
+              className={`px-2 py-2 rounded-lg ${mobilePane === pane ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-300'}`}>
+              {label}
+            </button>
+          ))}
+        </nav>
+
         {/* Main Content Workspace */}
-        <div className="flex-1 grid grid-cols-1 md:grid-cols-12 overflow-hidden">
+        <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-12 overflow-hidden">
           {/* Left: Document List & Category Shelf */}
-          <div className="md:col-span-3 border-r border-slate-800 bg-slate-950/40 p-3 flex flex-col gap-3 overflow-hidden">
+          <div className={`${mobilePane === 'SHELF' ? 'flex' : 'hidden'} md:flex min-w-0 md:col-span-3 border-r border-slate-800 bg-slate-950/40 p-3 flex-col gap-3 overflow-hidden`}>
             {/* Category Filter Pills */}
             <div className="flex items-center gap-1 overflow-x-auto pb-1 text-[11px]">
               <button
@@ -291,7 +293,7 @@ ${query}
                   selectedCategory === 'worldbuilding' ? 'bg-purple-600 text-white font-medium' : 'bg-slate-800/80 text-slate-400 hover:text-slate-200'
                 }`}
               >
-                设定设定
+                世界设定
               </button>
             </div>
 
@@ -302,17 +304,20 @@ ${query}
                 return (
                   <div
                     key={doc.id}
-                    onClick={() => {
-                      setSelectedDocId(doc.id);
-                      setSelectedChapterIdx(0);
-                    }}
                     className={`p-2.5 rounded-xl border text-xs cursor-pointer transition flex items-start justify-between gap-2 group ${
-                      isSelected 
-                        ? 'bg-purple-950/40 border-purple-500 text-white shadow' 
+                      isSelected
+                        ? 'bg-purple-950/40 border-purple-500 text-white shadow'
                         : 'bg-slate-900/60 border-slate-800/80 text-slate-300 hover:border-slate-700'
                     }`}
                   >
-                    <div className="flex items-start gap-2 overflow-hidden">
+                    <button type="button" aria-pressed={isSelected}
+                      onClick={() => {
+                        setSelectedDocId(doc.id);
+                        setSelectedChapterIdx(0);
+                        setSearchQuery('');
+                        setMobilePane(doc.format === 'pdf' ? 'READER' : 'CONTENTS');
+                      }}
+                      className="flex flex-1 min-w-0 items-start gap-2 overflow-hidden text-left">
                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono uppercase font-bold shrink-0 mt-0.5 ${
                         doc.format === 'pdf' ? 'bg-red-950 text-red-300 border border-red-800' :
                         doc.format === 'epub' ? 'bg-amber-950 text-amber-300 border border-amber-800' :
@@ -320,24 +325,24 @@ ${query}
                       }`}>
                         {doc.format}
                       </span>
-                      <div className="overflow-hidden">
-                        <div className="font-medium truncate">{doc.title}</div>
-                        <div className="text-[10px] text-slate-500 mt-0.5 flex items-center gap-1.5">
+                      <span className="overflow-hidden">
+                        <span className="block font-medium truncate">{doc.title}</span>
+                        <span className="text-[10px] text-slate-500 mt-0.5 flex items-center gap-1.5">
                           <span>{doc.parsedChapters?.length || 1} 章节</span>
                           {doc.excerpts && doc.excerpts.length > 0 && (
                             <span className="text-purple-300">· {doc.excerpts.length} 卡片</span>
                           )}
-                        </div>
-                      </div>
-                    </div>
+                        </span>
+                      </span>
+                    </button>
 
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         handleDeleteDoc(doc.id);
                       }}
-                      className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-red-400 rounded transition"
-                      title="移除书籍"
+                      className="md:opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 text-slate-500 hover:text-red-400 rounded transition"
+                      title={`移除《${doc.title}》`} aria-label={`移除《${doc.title}》`}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -354,7 +359,7 @@ ${query}
           </div>
 
           {/* Center: Document Table of Contents */}
-          <div className="md:col-span-3 border-r border-slate-800 bg-slate-900/30 p-3 flex flex-col gap-2 overflow-hidden">
+          <div className={`${mobilePane === 'CONTENTS' ? 'flex' : 'hidden'} md:flex min-w-0 md:col-span-3 border-r border-slate-800 bg-slate-900/30 p-3 flex-col gap-2 overflow-hidden`}>
             <div className="relative">
               <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-500" />
               <input
@@ -362,33 +367,35 @@ ${query}
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 placeholder="搜索章节或文本..."
+                aria-label="搜索章节或正文"
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white outline-none focus:border-purple-500 placeholder:text-slate-600"
               />
             </div>
 
             <div className="flex-1 overflow-y-auto space-y-1 pr-1 text-xs">
-              {filteredChapters.map((ch, idx) => {
+              {filteredChapters.map(({ chapter: ch, index: idx }) => {
                 const isSelected = idx === selectedChapterIdx;
                 return (
-                  <div
+                  <button type="button" aria-current={isSelected ? 'true' : undefined}
                     key={ch.id}
-                    onClick={() => setSelectedChapterIdx(idx)}
-                    className={`p-2 rounded-lg cursor-pointer transition truncate flex items-center justify-between ${
-                      isSelected 
-                        ? 'bg-purple-600 text-white font-medium' 
+                    onClick={() => { setSelectedChapterIdx(idx); setMobilePane('READER'); }}
+                    className={`w-full text-left p-2 rounded-lg cursor-pointer transition truncate flex items-center justify-between ${
+                      isSelected
+                        ? 'bg-purple-600 text-white font-medium'
                         : 'text-slate-300 hover:bg-slate-800/80'
                     }`}
                   >
                     <span className="truncate">{ch.title}</span>
                     <span className="text-[10px] opacity-70 shrink-0 ml-1 font-mono">{ch.content.length}字</span>
-                  </div>
+                  </button>
                 );
               })}
+              {filteredChapters.length === 0 && <p className="px-2 py-6 text-slate-500">没有匹配的章节，试试其他关键词。</p>}
             </div>
           </div>
 
           {/* Right: Research & Reader Workbench */}
-          <div className="md:col-span-6 bg-slate-950/60 p-5 flex flex-col overflow-hidden">
+          <div className={`${mobilePane === 'READER' ? 'flex' : 'hidden'} md:flex min-w-0 md:col-span-6 bg-slate-950/60 p-3 sm:p-5 flex-col overflow-hidden`}>
             {currentDoc ? (
               currentDoc.format === 'pdf' && currentDoc.fileBlobUrl ? (
                 // PDF Native Split Viewer
@@ -415,8 +422,8 @@ ${query}
                 // TXT / EPUB Reading & Zettelkasten Station
                 <div className="flex-1 flex flex-col overflow-hidden">
                   {/* Mode Tabs: Reader / Excerpt Cards / AI Probe */}
-                  <div className="flex items-center justify-between pb-3 border-b border-slate-800 text-xs">
-                    <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800 text-xs shrink-0">
+                    <div className="flex flex-wrap items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800">
                       <button
                         onClick={() => setActiveTab('READER')}
                         className={`px-3 py-1 rounded-md transition flex items-center gap-1 ${
@@ -424,7 +431,7 @@ ${query}
                         }`}
                       >
                         <BookOpen className="w-3 h-3" />
-                        文献沉浸阅读
+                        阅读
                       </button>
                       <button
                         onClick={() => setActiveTab('EXCERPTS')}
@@ -433,7 +440,7 @@ ${query}
                         }`}
                       >
                         <Quote className="w-3 h-3" />
-                        考据卡片盒 ({allExcerpts.length})
+                        摘录 ({allExcerpts.length})
                       </button>
                       <button
                         onClick={() => setActiveTab('AI_PROBE')}
@@ -442,12 +449,12 @@ ${query}
                         }`}
                       >
                         <Wand2 className="w-3 h-3 text-yellow-300" />
-                        AI 文献探针
+                        AI 考据
                       </button>
                     </div>
 
                     {/* Quick Tools */}
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <button
                         onClick={() => currentChapter && handleCopySnippet(currentChapter.content)}
                         className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded flex items-center gap-1 transition"
@@ -461,7 +468,7 @@ ${query}
                           onClick={() => currentChapter && onInsertReferenceSnippet(`【引自《${currentDoc.title}》】：\n${currentChapter.content.slice(0, 500)}...\n`)}
                           className="px-2.5 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded flex items-center gap-1 transition font-medium"
                         >
-                          引用摘录入码字区
+                          引用到正文
                         </button>
                       )}
                     </div>
@@ -471,28 +478,29 @@ ${query}
                   {activeTab === 'READER' && (
                     <div className="flex-1 flex flex-col overflow-hidden pt-3">
                       {/* Reader Settings & Theme Switcher Bar */}
-                      <div className="flex items-center justify-between pb-2 text-[11px] text-slate-400 border-b border-slate-800/60 mb-2">
+                      <h4 className="text-sm font-medium mb-2 truncate">{currentChapter?.title || currentDoc.title}</h4>
+                      <div className="flex flex-wrap items-center justify-between gap-2 pb-2 text-[11px] text-slate-400 border-b border-slate-800/60 mb-2 shrink-0">
                         <div className="flex items-center gap-1.5">
                           <span>纸张：</span>
-                          <button 
+                          <button
                             onClick={() => setReaderTheme('ink')}
                             className={`px-2 py-0.5 rounded ${readerTheme === 'ink' ? 'bg-purple-600 text-white' : 'bg-slate-800'}`}
                           >
                             玄墨
                           </button>
-                          <button 
+                          <button
                             onClick={() => setReaderTheme('sepia')}
                             className={`px-2 py-0.5 rounded ${readerTheme === 'sepia' ? 'bg-amber-800 text-amber-100' : 'bg-slate-800'}`}
                           >
                             古卷
                           </button>
-                          <button 
+                          <button
                             onClick={() => setReaderTheme('emerald')}
                             className={`px-2 py-0.5 rounded ${readerTheme === 'emerald' ? 'bg-emerald-800 text-emerald-100' : 'bg-slate-800'}`}
                           >
                             竹青
                           </button>
-                          <button 
+                          <button
                             onClick={() => setReaderTheme('paper')}
                             className={`px-2 py-0.5 rounded ${readerTheme === 'paper' ? 'bg-slate-300 text-slate-900' : 'bg-slate-800'}`}
                           >
@@ -501,14 +509,14 @@ ${query}
                         </div>
 
                         <div className="flex items-center gap-2">
-                          <button 
+                          <button aria-label="缩小正文字号"
                             onClick={() => setFontSize(s => Math.max(13, s - 1))}
                             className="px-1.5 py-0.5 bg-slate-800 rounded"
                           >
                             A-
                           </button>
                           <span className="font-mono">{fontSize}px</span>
-                          <button 
+                          <button aria-label="放大正文字号"
                             onClick={() => setFontSize(s => Math.min(24, s + 1))}
                             className="px-1.5 py-0.5 bg-slate-800 rounded"
                           >
@@ -518,8 +526,10 @@ ${query}
                       </div>
 
                       {/* Main Literary Text Canvas with onMouseUp selection capture */}
-                      <div 
+                      <div
                         onMouseUp={handleTextSelect}
+                        onTouchEnd={handleTextSelect}
+                        onKeyUp={handleTextSelect}
                         className={`flex-1 overflow-y-auto p-4 rounded-xl border border-slate-800/80 font-serif leading-loose whitespace-pre-line text-justify select-text ${readerThemeClasses[readerTheme]}`}
                         style={{ fontSize: `${fontSize}px` }}
                       >
@@ -534,7 +544,7 @@ ${query}
                               <Highlighter className="w-3.5 h-3.5" />
                               已划取文本 ({highlightSelection.length} 字符)
                             </span>
-                            <button onClick={() => setHighlightSelection('')} className="text-slate-400 hover:text-white">✕</button>
+                            <button aria-label="取消当前摘录" onClick={() => setHighlightSelection('')} className="text-slate-400 hover:text-white">✕</button>
                           </div>
                           <div className="text-[11px] text-slate-300 line-clamp-2 italic border-l-2 border-purple-400 pl-2">
                             “{highlightSelection}”
@@ -545,6 +555,7 @@ ${query}
                               value={newCardNote}
                               onChange={e => setNewCardNote(e.target.value)}
                               placeholder="添加创作者考据备忘 / 用途标注..."
+                              aria-label="摘录用途与考据备忘"
                               className="bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-white outline-none focus:border-purple-500"
                             />
                             <div className="flex gap-2">
@@ -553,6 +564,7 @@ ${query}
                                 value={newCardTags}
                                 onChange={e => setNewCardTags(e.target.value)}
                                 placeholder="标签 (如: 兵器, 风俗)"
+                                aria-label="摘录标签"
                                 className="flex-1 bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-white outline-none focus:border-purple-500"
                               />
                               <button
@@ -635,13 +647,14 @@ ${query}
                     <div className="flex-1 flex flex-col overflow-hidden pt-3 space-y-3">
                       <div className="space-y-2">
                         <label className="text-[11px] text-slate-400 block font-medium">针对本章节的 AI 考据探针指令：</label>
-                        <div className="flex gap-2">
+                        <div className="flex flex-col sm:flex-row gap-2">
                           <input
                             type="text"
                             value={probeQuestion}
                             onChange={e => setProbeQuestion(e.target.value)}
                             placeholder="例如：提取所有关于草药配比、黑市行话或宵禁制度的描写..."
-                            className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-purple-500 font-serif"
+                            aria-label="当前章节的考据目标"
+                            className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-purple-500 font-serif"
                           />
                           <button
                             onClick={() => handleRunAIProbe()}
@@ -680,7 +693,7 @@ ${query}
                       <div className="flex-1 overflow-y-auto p-4 bg-slate-950 border border-slate-800 rounded-xl font-serif text-slate-200 leading-relaxed text-xs whitespace-pre-line select-text">
                         {probeAnswer || (
                           <div className="text-slate-500 text-center py-16">
-                            点击上方按钮，AI 将瞬间穿透本章文本，结构化提炼可直接融入小说的绝妙风物细节！
+                            输入考据目标，让 AI 从当前章节整理可供写作参考的细节。
                           </div>
                         )}
                       </div>
@@ -695,7 +708,6 @@ ${query}
             )}
           </div>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 };

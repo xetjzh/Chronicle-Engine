@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { ProjectData, Character } from '../types';
-import { storageService } from '../services/storageService';
 import { CharacterCardGeneratorModal } from './CharacterCardGeneratorModal';
 import { 
   Users, UserCheck, Heart, Shield, Brain, Eye, Plus, Sparkles, AlertCircle, Wand2 
@@ -27,7 +26,6 @@ export const CharacterManager: React.FC<CharacterManagerProps> = ({
     );
     const updated = { ...project, characters: updatedChars };
     onUpdateProject(updated);
-    storageService.saveProject(updated);
   };
 
   const handleAddNewCharacter = () => {
@@ -56,14 +54,12 @@ export const CharacterManager: React.FC<CharacterManagerProps> = ({
     };
     const updated = { ...project, characters: [...project.characters, newChar] };
     onUpdateProject(updated);
-    storageService.saveProject(updated);
     setSelectedCharId(newChar.id);
   };
 
   const handleAddGeneratedCharacter = (char: Character) => {
     const updated = { ...project, characters: [...project.characters, char] };
     onUpdateProject(updated);
-    storageService.saveProject(updated);
     setSelectedCharId(char.id);
   };
 
@@ -101,10 +97,12 @@ export const CharacterManager: React.FC<CharacterManagerProps> = ({
               const isSelected = char.id === currentChar?.id;
               const location = project.locations.find(l => l.id === char.currentLocationId);
               return (
-                <div
+                <button
+                  type="button"
                   key={char.id}
                   onClick={() => setSelectedCharId(char.id)}
-                  className={`p-3.5 rounded-xl border text-xs cursor-pointer transition ${
+                  aria-pressed={isSelected}
+                  className={`block w-full text-left p-3.5 rounded-xl border text-xs cursor-pointer transition ${
                     isSelected 
                       ? 'bg-purple-950/40 border-purple-500 shadow' 
                       : 'bg-slate-800/40 border-slate-800 hover:border-slate-700'
@@ -121,7 +119,7 @@ export const CharacterManager: React.FC<CharacterManagerProps> = ({
                   <div className="text-[11px] text-slate-500 mt-1 line-clamp-1">
                     欲求: {char.coreDesire}
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -138,12 +136,14 @@ export const CharacterManager: React.FC<CharacterManagerProps> = ({
                   <input
                     type="text"
                     value={currentChar.name}
+                    aria-label="人物姓名"
                     onChange={e => handleUpdateCurrentChar({ name: e.target.value })}
                     className="text-xl font-bold text-white bg-transparent border-b border-transparent hover:border-slate-700 focus:border-purple-500 outline-none"
                   />
                   <input
                     type="text"
                     value={currentChar.title}
+                    aria-label="人物称谓"
                     onChange={e => handleUpdateCurrentChar({ title: e.target.value })}
                     className="text-xs text-purple-400 bg-slate-800 px-2 py-1 rounded border border-slate-700 outline-none"
                   />

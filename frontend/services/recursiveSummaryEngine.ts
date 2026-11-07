@@ -1,4 +1,4 @@
-import { ProjectData, Chapter, ChapterExtraction } from '../types';
+import type { ProjectData, Chapter, ChapterExtraction } from '../types';
 import { AIProviderService } from './aiProviderService';
 
 export class RecursiveSummaryEngine {
@@ -35,33 +35,34 @@ ${textExcerpt}
   "tensionScore": 75
 }`;
 
+    const rawText = await AIProviderService.generateText(project.aiConfig, {
+      prompt,
+      systemInstruction: '你是一位极其精确的事件因果整理官，提取客观事实，过滤文学修辞。',
+      overrideSampling: { temperature: 0.2 },
+      thinkingBudget: 0,
+    });
+
+    const clean = rawText.replace(/^\s*```(?:json)?\s*|\s*```\s*$/gi, '').trim();
+    let parsed: unknown;
     try {
-      const rawText = await AIProviderService.generateText(project.aiConfig, {
-        prompt,
-        systemInstruction: '你是一位极其精确的事件因果整理官，提取客观事实，过滤文学修辞。',
-        overrideSampling: { temperature: 0.2 },
-        thinkingBudget: 0,
-      });
-
-      const clean = rawText.replace(/```json|```/gi, '').trim();
-      const parsed = JSON.parse(clean);
-
-      return {
-        chapterSummary: parsed.chapterSummary || chapter.outline,
-        keyStateChanges: Array.isArray(parsed.keyStateChanges) ? parsed.keyStateChanges : [],
-        newLoreLearned: Array.isArray(parsed.newLoreLearned) ? parsed.newLoreLearned : [],
-        tensionScore: typeof parsed.tensionScore === 'number' ? Math.min(100, Math.max(10, parsed.tensionScore)) : 60,
-      };
-    } catch (e) {
-      // Deterministic fallback based on text heuristics
-      const hasConflict = /刀|剑|杀|血|暴|死|惊|斩|急|逼/g.test(chapter.content);
-      const computedScore = hasConflict ? 75 : 45;
-      return {
-        chapterSummary: chapter.outline || `${chapter.title}：多方势力在此章节完成交汇与试探。`,
-        keyStateChanges: [`视点人物推进了当前阶段的因果行动`],
-        newLoreLearned: [],
-        tensionScore: computedScore,
-      };
+      parsed = JSON.parse(clean);
+    } catch (error) {
+      throw new Error('章节摘要返回的 JSON 无效，请重试。', { cause: error });
     }
+
+    if (!parsed || typeof parsed !== 'object') throw new Error('章节摘要格式不完整，请重试。');
+    const extraction = parsed as Record<string, unknown>;
+    const stringList = (value: unknown): value is string[] => Array.isArray(value) && value.every(item => typeof item === 'string');
+    if (typeof extraction.chapterSummary !== 'string' || !extraction.chapterSummary.trim()
+      || !stringList(extraction.keyStateChanges) || !stringList(extraction.newLoreLearned)
+      || typeof extraction.tensionScore !== 'number' || !Number.isFinite(extraction.tensionScore)) {
+      throw new Error('章节摘要格式不完整，请重试。');
+    }
+    return {
+      chapterSummary: extraction.chapterSummary,
+      keyStateChanges: extraction.keyStateChanges,
+      newLoreLearned: extraction.newLoreLearned,
+      tensionScore: Math.min(100, Math.max(0, extraction.tensionScore)),
+    };
   }
 }
