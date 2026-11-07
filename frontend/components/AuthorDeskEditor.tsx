@@ -2,8 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { ProjectData, WritingDeskSettings } from '../types';
 import { soundEffects } from '../services/soundEffects';
 import { AIProviderService } from '../services/aiProviderService';
-import { AlignLeft, BookOpen, Check, ChevronRight, Feather, List, Maximize2, Minimize2, Palette, Plus, RefreshCw, Sparkles, SplitSquareVertical, Target, Volume2, VolumeX, Wand2, X } from 'lucide-react';
-import { applyWritingAssistantResult, createWritingChapter, defaultWritingSettings, formatWritingParagraphs, updateWritingContent, updateWritingPreferences } from './writingWorkspace';
+import { Dialog } from './Dialog';
+import { AlignLeft, BookOpen, Check, ChevronRight, Feather, List, Maximize2, Minimize2, Palette, Plus, RefreshCw, Sparkles, SplitSquareVertical, Target, Trash2, Volume2, VolumeX, Wand2, X } from 'lucide-react';
+import { applyWritingAssistantResult, createWritingChapter, defaultWritingSettings, deleteWritingChapter, formatWritingParagraphs, updateWritingContent, updateWritingPreferences } from './writingWorkspace';
 
 interface AuthorDeskEditorProps {
   project: ProjectData;
@@ -29,11 +30,12 @@ export const AuthorDeskEditor: React.FC<AuthorDeskEditorProps> = ({ project, onU
   const [isAIAssisting, setIsAIAssisting] = useState(false);
   const [assistantNotice, setAssistantNotice] = useState('');
   const [pendingAIText, setPendingAIText] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<{ projectId: string; chapterId: string } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const latestProject = useRef(project);
   const latestCallback = useRef(onUpdateProject);
   const mounted = useRef(true);
-  const requestRunning = useRef(false);
+  const activeAIRequest = useRef<{ projectId: string; chapterId: string; controller: AbortController } | null>(null);
   latestProject.current = project;
   latestCallback.current = onUpdateProject;
 
@@ -41,6 +43,9 @@ export const AuthorDeskEditor: React.FC<AuthorDeskEditorProps> = ({ project, onU
   const currentChapter = project.chapters.find(chapter => chapter.id === activeChapterId) || project.chapters[0];
   const currentChapterId = useRef(currentChapter?.id);
   currentChapterId.current = currentChapter?.id;
+  const chapterToDelete = deleteTarget?.projectId === project.id
+    ? project.chapters.find(chapter => chapter.id === deleteTarget.chapterId)
+    : undefined;
   const reference = project.referenceDocs?.find(doc => doc.id === referenceId) || project.referenceDocs?.[0];
   const theme = writingThemes[deskSettings.theme] || writingThemes.ink;
   const themeStyle = {
@@ -52,8 +57,33 @@ export const AuthorDeskEditor: React.FC<AuthorDeskEditorProps> = ({ project, onU
 
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; };
+    return () => {
+      mounted.current = false;
+      activeAIRequest.current?.controller.abort();
+      activeAIRequest.current = null;
+    };
   }, []);
+
+  const stopAIAssistance = (notice = '已停止生成。') => {
+    const active = activeAIRequest.current;
+    if (!active) return;
+    activeAIRequest.current = null;
+    active.controller.abort();
+    setIsAIAssisting(false);
+    setAssistantNotice(notice);
+  };
+
+  useEffect(() => {
+    setDeleteTarget(null);
+  }, [project.id]);
+
+  useEffect(() => {
+    const active = activeAIRequest.current;
+    if (active && (active.projectId !== project.id || !project.chapters.some(chapter => chapter.id === active.chapterId))) {
+      stopAIAssistance('作品或章节已变化，已停止生成。');
+      setPendingAIText('');
+    }
+  }, [project.id, project.chapters]);
 
   const commitProject = (updated: ProjectData) => {
     latestProject.current = updated;
@@ -96,6 +126,19 @@ export const AuthorDeskEditor: React.FC<AuthorDeskEditorProps> = ({ project, onU
     setActiveChapterId(chapter.id);
     setShowChapterList(false);
   };
+  const handleDeleteChapter = () => {
+    const latest = latestProject.current;
+    if (!deleteTarget || latest.id !== deleteTarget.projectId) {
+      setDeleteTarget(null);
+      return;
+    }
+    const result = deleteWritingChapter(latest, deleteTarget.chapterId, currentChapterId.current || '');
+    setDeleteTarget(null);
+    if (result.project === latest) return;
+    if (activeAIRequest.current?.chapterId === deleteTarget.chapterId) stopAIAssistance('章节已删除，已停止生成。');
+    setActiveChapterId(result.activeChapterId);
+    commitProject(result.project);
+  };
   const handleFormatIndent = () => {
     if (!currentChapter) return;
     handleContentChange(formatWritingParagraphs(currentChapter.content));
@@ -105,7 +148,7 @@ export const AuthorDeskEditor: React.FC<AuthorDeskEditorProps> = ({ project, onU
   const handleAIPolishSnippet = async (operation: 'polish' | 'expand') => {
     const source = latestProject.current;
     const chapter = source.chapters.find(item => item.id === currentChapterId.current);
-    if (!chapter || requestRunning.current) return;
+    if (!chapter || activeAIRequest.current) return;
     const textarea = textareaRef.current;
     const hasSelection = !!textarea && textarea.selectionStart !== textarea.selectionEnd;
     const start = hasSelection ? textarea!.selectionStart : Math.max(0, chapter.content.length - 350);
@@ -120,18 +163,21 @@ export const AuthorDeskEditor: React.FC<AuthorDeskEditorProps> = ({ project, onU
       replaceStart: operation === 'expand' && !hasSelection ? chapter.content.length : start,
       replaceEnd: operation === 'expand' && !hasSelection ? chapter.content.length : end,
     };
-    requestRunning.current = true;
+    const active = { projectId: source.id, chapterId: chapter.id, controller: new AbortController() };
+    activeAIRequest.current = active;
     setIsAIAssisting(true);
     setAssistantNotice('正在整理灵感，你可以继续写作。');
     setPendingAIText('');
     const instruction = operation === 'polish'
-      ? '请将以下小说段落进行古典文学性润色，增强环境音画、人物细微眼神与情绪暗涌，去除网络化白话：'
-      : '请紧密接续以下剧情，顺畅扩写两段具有极强文学厚度的叙事正文（约300字）：';
+      ? '请在保留原意、叙述视角、人物设定和情节事实的前提下润色以下小说段落，改善语句表达、衔接与可读性：'
+      : '请紧接以下小说段落续写约300字，保持既有叙述视角、人物设定和情节连贯，让故事自然发展：';
     try {
       const generated = await AIProviderService.generateText(source.aiConfig, {
-        prompt: `${instruction}\n\n“${targetText}”\n\n直接输出处理后的纯正文。`, overrideSampling: { temperature: 0.75 },
+        prompt: `${instruction}\n\n“${targetText}”\n\n直接输出处理后的纯正文。`,
+        authorsNote: source.aiConfig.authorsNote?.enabled ? source.aiConfig.authorsNote.content : undefined,
+        signal: active.controller.signal,
       });
-      if (!mounted.current) return;
+      if (!mounted.current || activeAIRequest.current !== active || active.controller.signal.aborted) return;
       if (!generated?.trim()) { setAssistantNotice('本次没有生成文字，请稍后重试。'); return; }
       const text = operation === 'expand' && !hasSelection ? `\n\n${generated.trim()}` : generated.trim();
       const result = applyWritingAssistantResult(latestProject.current, request, text, new Date().toISOString());
@@ -144,10 +190,14 @@ export const AuthorDeskEditor: React.FC<AuthorDeskEditorProps> = ({ project, onU
       setAssistantNotice(operation === 'polish' ? '段落润色已应用。' : '续写已添加。');
       if (result.project.deskSettings?.soundEnabled) soundEffects.playChime();
     } catch (error) {
-      if (mounted.current) setAssistantNotice(`灵感生成暂未完成：${error instanceof Error ? error.message : '请检查模型设置后重试'}`);
+      if (mounted.current && activeAIRequest.current === active && !active.controller.signal.aborted) {
+        setAssistantNotice(`灵感生成暂未完成：${error instanceof Error ? error.message : '请检查模型设置后重试'}`);
+      }
     } finally {
-      requestRunning.current = false;
-      if (mounted.current) setIsAIAssisting(false);
+      if (activeAIRequest.current === active) {
+        activeAIRequest.current = null;
+        if (mounted.current) setIsAIAssisting(false);
+      }
     }
   };
 
@@ -182,14 +232,14 @@ export const AuthorDeskEditor: React.FC<AuthorDeskEditorProps> = ({ project, onU
         <aside id="desk-chapter-list" aria-label="章节目录" className={`desk-chapter-sidebar shrink-0 border-b border-[var(--desk-border)] bg-[var(--desk-surface)] p-4 xl:w-56 xl:border-b-0 xl:border-r ${showChapterList ? 'block' : 'hidden xl:block'} ${deskSettings.isZenMode ? 'xl:overflow-y-auto' : ''}`}>
           <div className="mb-4 flex items-center justify-between"><div><h4 className="text-xs font-semibold">作品目录</h4><p className="mt-1.5 text-[10px] text-[var(--desk-muted)]">{project.chapters.length} 章 · {totalWords.toLocaleString()} 字</p></div><button onClick={handleCreateChapter} aria-label="新建章节" title="新建章节" className={`${toolClass} !px-2`}><Plus className={iconClass} /></button></div>
           <nav aria-label="选择写作章节" className="max-h-80 space-y-1.5 overflow-y-auto xl:max-h-[650px]">
-            {project.chapters.map(chapter => { const selected = chapter.id === currentChapter?.id; return <button key={chapter.id} onClick={() => { setActiveChapterId(chapter.id); setShowChapterList(false); }} aria-current={selected ? 'page' : undefined} className={`desk-chapter flex w-full items-start gap-2 rounded-lg border p-2.5 text-left ${selected ? 'border-[var(--desk-border)] bg-black/10' : 'border-transparent hover:bg-black/5'}`}><span className="mt-0.5 shrink-0 font-mono text-[10px] text-[var(--desk-muted)]">{String(chapter.chapterNumber).padStart(2, '0')}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{chapter.title || '未命名章节'}</span><span className="mt-1.5 block text-[10px] text-[var(--desk-muted)]">{chapter.wordCount.toLocaleString()} 字 · {chapter.status === 'final' ? '定稿' : chapter.status === 'audited' ? '已审阅' : '草稿'}</span></span>{selected && <ChevronRight className="mt-0.5 h-3 w-3 shrink-0 text-[var(--desk-accent)]" />}</button>; })}
+            {project.chapters.map(chapter => { const selected = chapter.id === currentChapter?.id; return <div key={chapter.id} className={`desk-chapter flex w-full items-center rounded-lg border ${selected ? 'border-[var(--desk-border)] bg-black/10' : 'border-transparent hover:bg-black/5'}`}><button onClick={() => { setActiveChapterId(chapter.id); setShowChapterList(false); }} aria-current={selected ? 'page' : undefined} className="flex min-w-0 flex-1 items-start gap-2 p-2.5 text-left"><span className="mt-0.5 shrink-0 font-mono text-[10px] text-[var(--desk-muted)]">{String(chapter.chapterNumber).padStart(2, '0')}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{chapter.title || '未命名章节'}</span><span className="mt-1.5 block text-[10px] text-[var(--desk-muted)]">{chapter.wordCount.toLocaleString()} 字 · {chapter.status === 'final' ? '定稿' : chapter.status === 'audited' ? '已审阅' : '草稿'}</span></span>{selected && <ChevronRight className="mt-0.5 h-3 w-3 shrink-0 text-[var(--desk-accent)]" />}</button><button onClick={() => setDeleteTarget({ projectId: project.id, chapterId: chapter.id })} aria-label={`删除章节：${chapter.title || '未命名章节'}`} title="删除章节" className="mr-1.5 grid min-h-9 w-8 shrink-0 place-items-center rounded-lg text-[var(--desk-muted)] transition hover:bg-red-500/10 hover:text-red-500"><Trash2 className={iconClass} /></button></div>; })}
             {project.chapters.length === 0 && <p className="py-5 text-center text-xs text-[var(--desk-muted)]">故事从第一章开始。</p>}
           </nav>
           <div className="mt-6 border-t border-[var(--desk-border)] pt-4"><span className="flex items-center gap-2 text-[10px] text-[var(--desk-muted)]"><Target className={iconClass} />今日写作目标</span><div className="mt-2 flex items-baseline gap-1"><strong className="font-mono text-lg font-medium text-[var(--desk-accent)]">{deskSettings.currentSessionWords.toLocaleString()}</strong><span className="text-[10px] text-[var(--desk-muted)]">/ {deskSettings.targetDailyWords.toLocaleString()} 字</span></div><div className="mt-3 h-1 overflow-hidden rounded-full bg-black/15" role="progressbar" aria-label="今日写作进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressRatio}><div className="h-full rounded-full bg-[var(--desk-accent)]" style={{ width: `${progressRatio}%` }} /></div></div>
         </aside>
 
         <div className="desk-manuscript min-w-0 flex-1 xl:overflow-y-auto">
-          <div className="desk-editor-actions flex flex-wrap items-center justify-between gap-2 border-b border-[var(--desk-border)] px-4 py-2.5 sm:px-7"><span className="text-[10px] text-[var(--desk-muted)]">{currentChapter ? `第 ${currentChapter.volumeNumber} 卷 / 第 ${currentChapter.chapterNumber} 章` : '准备开启新篇章'}</span><div className="flex flex-wrap items-center gap-1.5"><button onClick={() => handleAIPolishSnippet('polish')} disabled={!currentChapter || isAIAssisting} className={toolClass} title="润色选中文字，未选择时润色末尾段落">{isAIAssisting ? <RefreshCw className={`${iconClass} animate-spin`} /> : <Wand2 className={iconClass} />}润色</button><button onClick={() => handleAIPolishSnippet('expand')} disabled={!currentChapter || isAIAssisting} className={`${toolClass} text-[var(--desk-accent)]`}><Sparkles className={iconClass} />续写</button><button onClick={handleFormatIndent} disabled={!currentChapter} className={toolClass}><AlignLeft className={iconClass} />排版</button></div></div>
+          <div className="desk-editor-actions flex flex-wrap items-center justify-between gap-2 border-b border-[var(--desk-border)] px-4 py-2.5 sm:px-7"><span className="text-[10px] text-[var(--desk-muted)]">{currentChapter ? `第 ${currentChapter.volumeNumber} 卷 / 第 ${currentChapter.chapterNumber} 章` : '准备开启新篇章'}</span><div className="flex flex-wrap items-center gap-1.5"><button onClick={() => handleAIPolishSnippet('polish')} disabled={!currentChapter || isAIAssisting} className={toolClass} title="润色选中文字，未选择时润色末尾段落">{isAIAssisting ? <RefreshCw className={`${iconClass} animate-spin`} /> : <Wand2 className={iconClass} />}润色</button><button onClick={() => handleAIPolishSnippet('expand')} disabled={!currentChapter || isAIAssisting} className={`${toolClass} text-[var(--desk-accent)]`}><Sparkles className={iconClass} />续写</button>{isAIAssisting && <button onClick={() => stopAIAssistance()} className={toolClass}><X className={iconClass} />停止生成</button>}<button onClick={handleFormatIndent} disabled={!currentChapter} className={toolClass}><AlignLeft className={iconClass} />排版</button></div></div>
           {assistantNotice && <div className="desk-assistant-notice mx-4 mt-4 rounded-lg border border-[var(--desk-border)] bg-[var(--desk-surface)] p-3 text-xs sm:mx-7"><div className="flex items-start justify-between gap-3"><p role="status" className="leading-relaxed">{assistantNotice}</p>{!isAIAssisting && <button onClick={() => { setAssistantNotice(''); setPendingAIText(''); }} aria-label="关闭灵感提示" className="shrink-0 rounded p-0.5"><X className={iconClass} /></button>}</div>{pendingAIText && <details className="mt-2"><summary className="cursor-pointer text-[var(--desk-accent)]">查看并选取生成文字</summary><textarea aria-label="保留的 AI 生成文字" readOnly value={pendingAIText} className="mt-2 min-h-40 w-full rounded-lg border border-[var(--desk-border)] bg-[var(--desk-bg)] p-3 font-serif leading-relaxed text-inherit" /></details>}</div>}
           {currentChapter ? <div className="desk-writing-sheet mx-auto flex min-h-[580px] w-full max-w-3xl flex-col px-5 pb-10 pt-9 sm:px-10 sm:pt-12">
             <label className="mb-3 text-[10px] tracking-[0.2em] text-[var(--desk-muted)]" htmlFor="desk-chapter-title">章节标题</label>
@@ -203,6 +253,11 @@ export const AuthorDeskEditor: React.FC<AuthorDeskEditorProps> = ({ project, onU
       </div>
 
       <footer className="desk-statusbar flex flex-wrap items-center justify-between gap-3 border-t border-[var(--desk-border)] bg-[var(--desk-surface)] px-4 py-3 text-[10px] sm:px-5"><span className="text-[var(--desk-muted)]">本章 <strong className="font-mono font-medium text-[var(--desk-text)]">{(currentChapter?.wordCount || 0).toLocaleString()}</strong> 字<span className="mx-3 opacity-30">|</span>全书 <strong className="font-mono font-medium text-[var(--desk-text)]">{totalWords.toLocaleString()}</strong> 字</span><div className="flex items-center gap-3"><span className="hidden text-[var(--desk-muted)] sm:inline">{deskSettings.isZenMode ? 'Esc 退出专注' : '安心写作，随时停笔'}</span><div className="flex items-center gap-1 rounded-lg border border-[var(--desk-border)] p-0.5"><button onClick={() => changePreferences({ fontSize: Math.max(14, deskSettings.fontSize - 1) })} disabled={deskSettings.fontSize <= 14} className="min-h-7 min-w-7 rounded px-1.5 hover:bg-black/10 disabled:opacity-40" aria-label="缩小正文字号">A−</button><span className="px-1 font-mono">{deskSettings.fontSize}</span><button onClick={() => changePreferences({ fontSize: Math.min(28, deskSettings.fontSize + 1) })} disabled={deskSettings.fontSize >= 28} className="min-h-7 min-w-7 rounded px-1.5 hover:bg-black/10 disabled:opacity-40" aria-label="放大正文字号">A+</button></div></div></footer>
+      {chapterToDelete && <Dialog onClose={() => setDeleteTarget(null)} titleId="desk-delete-title" panelClassName="w-full max-w-md border border-slate-800 bg-slate-900 p-6 text-slate-200">
+        <h3 id="desk-delete-title" className="text-lg font-semibold">删除章节？</h3>
+        <p className="mt-3 break-words text-sm leading-relaxed">确定删除「{chapterToDelete.title || '未命名章节'}」及其 {chapterToDelete.wordCount.toLocaleString()} 字正文吗？此操作无法撤销。</p>
+        <div className="mt-6 flex justify-end gap-3"><button data-autofocus onClick={() => setDeleteTarget(null)} className="rounded-lg border border-white/15 px-4 py-2 text-sm">取消</button><button onClick={handleDeleteChapter} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500">确认删除</button></div>
+      </Dialog>}
     </section>
   );
 };

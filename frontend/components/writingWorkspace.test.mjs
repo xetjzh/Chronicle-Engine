@@ -30,6 +30,54 @@ test('new chapters follow the highest existing chapter number', () => {
   assert.equal(createWritingChapter(project(), 'new-id', 'today').chapterNumber, 8);
 });
 
+test('deleting the selected chapter selects the next chapter and preserves unrelated writing', () => {
+  const original = project();
+  original.chapters.push(chapter('three', '第三章新正文', 9));
+  original.events = [{ id: 'event', description: '仍需保留的世界事件' }];
+  assert.equal(typeof writingWorkspace.deleteWritingChapter, 'function');
+  const result = writingWorkspace.deleteWritingChapter(original, 'two', 'two');
+  assert.deepEqual(result.project.chapters.map(item => item.id), ['one', 'three']);
+  assert.equal(result.activeChapterId, 'three');
+  assert.strictEqual(result.project.chapters[0], original.chapters[0]);
+  assert.strictEqual(result.project.chapters[1], original.chapters[2]);
+  assert.strictEqual(result.project.events, original.events);
+  assert.strictEqual(result.project.deskSettings, original.deskSettings);
+  assert.deepEqual(original.chapters.map(item => item.id), ['one', 'two', 'three']);
+});
+
+test('deleting the last selected chapter selects its previous neighbor without renumbering', () => {
+  assert.equal(typeof writingWorkspace.deleteWritingChapter, 'function');
+  const result = writingWorkspace.deleteWritingChapter(project(), 'two', 'two');
+  assert.equal(result.activeChapterId, 'one');
+  assert.equal(result.project.chapters[0].chapterNumber, 1);
+});
+
+test('deleting another chapter preserves the selected chapter', () => {
+  assert.equal(typeof writingWorkspace.deleteWritingChapter, 'function');
+  const result = writingWorkspace.deleteWritingChapter(project(), 'one', 'two');
+  assert.equal(result.activeChapterId, 'two');
+  assert.equal(result.project.chapters[0].content, '另一章');
+  assert.equal(result.project.chapters[0].chapterNumber, 7);
+});
+
+test('the final chapter can be deleted and the empty book can start again', () => {
+  assert.equal(typeof writingWorkspace.deleteWritingChapter, 'function');
+  const original = { ...project(), chapters: [chapter('one', '最后正文')] };
+  const result = writingWorkspace.deleteWritingChapter(original, 'one', 'one');
+  assert.deepEqual(result.project.chapters, []);
+  assert.equal(result.activeChapterId, '');
+  assert.equal(createWritingChapter(result.project, 'new-first', 'today').chapterNumber, 1);
+  assert.equal(applyWritingAssistantResult(result.project, request(), '迟到的生成正文', 'later').applied, false);
+});
+
+test('a repeated deletion leaves the latest project and current selection untouched', () => {
+  assert.equal(typeof writingWorkspace.deleteWritingChapter, 'function');
+  const latest = project();
+  const result = writingWorkspace.deleteWritingChapter(latest, 'already-removed', 'two');
+  assert.strictEqual(result.project, latest);
+  assert.equal(result.activeChapterId, 'two');
+});
+
 test('preference changes preserve other preferences and project content', () => {
   const original = project();
   const result = updateWritingPreferences(original, { soundEnabled: false, fontSize: 23 });

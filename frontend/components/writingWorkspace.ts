@@ -30,6 +30,19 @@ export function createWritingChapter(project: ProjectData, id: string, now: stri
   };
 }
 
+export function deleteWritingChapter(
+  project: ProjectData, chapterId: string, activeChapterId: string,
+): { project: ProjectData; activeChapterId: string } {
+  const index = project.chapters.findIndex(chapter => chapter.id === chapterId);
+  if (index < 0) return { project, activeChapterId };
+  const chapters = project.chapters.filter(chapter => chapter.id !== chapterId);
+  const selected = chapters.find(chapter => chapter.id === activeChapterId);
+  return {
+    project: { ...project, chapters },
+    activeChapterId: selected?.id || chapters[Math.min(index, chapters.length - 1)]?.id || '',
+  };
+}
+
 export function updateWritingPreferences(project: ProjectData, patch: Partial<WritingDeskSettings>): ProjectData {
   return { ...project, deskSettings: { ...defaultWritingSettings, ...project.deskSettings, ...patch } };
 }

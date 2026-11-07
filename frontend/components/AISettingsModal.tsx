@@ -13,6 +13,13 @@ interface AISettingsModalProps {
   onClose: () => void;
 }
 
+const presetLabels: Record<AIPresetType, string> = {
+  sillytavern_literary: '古典文学',
+  ollama_arm_efficient: 'Ollama 本地写作',
+  deepseek_causality: 'DeepSeek 逻辑推演',
+  gemini_epic: 'Gemini 长篇起草',
+};
+
 export const AISettingsModal: React.FC<AISettingsModalProps> = ({
   project,
   onUpdateProject,
@@ -23,16 +30,39 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
   const [activeTab, setActiveTab] = useState<'PROVIDER' | 'SAMPLING' | 'AUTHORS_NOTE' | 'PRESETS'>('PROVIDER');
   const [testingProvider, setTestingProvider] = useState<AIProviderType | null>(null);
   const [testResult, setTestResult] = useState<ProviderHealthResult | null>(null);
+  const testController = React.useRef<AbortController | null>(null);
+
+  React.useEffect(() => () => {
+    testController.current?.abort();
+    testController.current = null;
+  }, []);
+
+  const cancelConnectionTest = () => {
+    testController.current?.abort();
+    testController.current = null;
+    setTestingProvider(null);
+  };
+
+  const updateConfig = (update: (current: AIProviderConfig) => AIProviderConfig) => {
+    cancelConnectionTest();
+    setTestResult(null);
+    setConfig(update);
+  };
+
+  const handleClose = () => {
+    cancelConnectionTest();
+    onClose();
+  };
 
   const handleSave = () => {
     const updated = { ...project, aiConfig: config };
     onUpdateProject(updated);
-    onClose();
+    handleClose();
   };
 
   const handleApplyPreset = (preset: AIPresetType) => {
     if (preset === 'sillytavern_literary') {
-      setConfig({
+      updateConfig(config => ({
         ...config,
         activePreset: preset,
         sampling: {
@@ -50,9 +80,9 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
           content: '[SillyTavern风格附注：严格禁止网络现代词；重点描写视线迟疑、衣物雨水与环境冷暖；人物必须严格基于自己已知信息行事]',
           insertionDepth: 1,
         }
-      });
+      }));
     } else if (preset === 'ollama_arm_efficient') {
-      setConfig({
+      updateConfig(config => ({
         ...config,
         activePreset: preset,
         activeProvider: 'ollama',
@@ -75,9 +105,9 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
           content: '[防复读强化：文字凝练，一气呵成，禁止机械重复先前的描写]',
           insertionDepth: 1,
         }
-      });
+      }));
     } else if (preset === 'deepseek_causality') {
-      setConfig({
+      updateConfig(config => ({
         ...config,
         activePreset: preset,
         activeProvider: 'openai_compatible',
@@ -91,18 +121,14 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
           presencePenalty: 0.1,
           maxTokens: 4000,
         },
-        openaiCompatible: {
-          ...config.openaiCompatible,
-          model: 'deepseek-chat',
-        },
         authorsNote: {
           enabled: true,
           content: '[因果逻辑优先：严密推敲人物每一步行动的直接诱因与心理动机，避免机械巧合]',
           insertionDepth: 1,
         }
-      });
+      }));
     } else if (preset === 'gemini_epic') {
-      setConfig({
+      updateConfig(config => ({
         ...config,
         activePreset: preset,
         activeProvider: 'gemini',
@@ -125,23 +151,33 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
           content: '[史诗画卷：长镜头景深描写，多方势力对峙张力蓄而不发]',
           insertionDepth: 1,
         }
-      });
+      }));
     }
   };
 
   const handleTestConnection = async (provider: AIProviderType) => {
+    cancelConnectionTest();
+    const controller = new AbortController();
+    testController.current = controller;
     setTestingProvider(provider);
     setTestResult(null);
     try {
-      const res = await AIProviderService.testProviderHealth(provider, config);
-      setTestResult(res);
+      const res = await AIProviderService.testProviderHealth(provider, config, controller.signal);
+      if (testController.current === controller && !controller.signal.aborted) setTestResult(res);
+    } catch (error) {
+      if (testController.current === controller && !controller.signal.aborted) {
+        setTestResult({ provider, ok: false, message: error instanceof Error ? error.message : String(error) });
+      }
     } finally {
-      setTestingProvider(null);
+      if (testController.current === controller) {
+        testController.current = null;
+        setTestingProvider(null);
+      }
     }
   };
 
   return (
-    <Dialog onClose={onClose} titleId={dialogTitleId} className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" panelClassName="bg-slate-900 border border-slate-800 rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 space-y-6 text-slate-200">
+    <Dialog onClose={handleClose} titleId={dialogTitleId} className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" panelClassName="bg-slate-900 border border-slate-800 rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 space-y-6 text-slate-200">
         <div className="flex items-center justify-between border-b border-slate-800 pb-4">
           <div className="flex items-center gap-2">
             <Settings2 className="w-5 h-5 text-purple-400" />
@@ -152,7 +188,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
               <p className="text-xs text-slate-400">连接模型，调整生成风格，保存常用写作偏好。</p>
             </div>
           </div>
-          <button onClick={onClose} aria-label="关闭对话框" className="shrink-0 p-1 hover:bg-slate-800 rounded-lg transition">
+          <button onClick={handleClose} aria-label="关闭对话框" className="shrink-0 p-1 hover:bg-slate-800 rounded-lg transition">
             <X className="w-5 h-5 text-slate-400" />
           </button>
         </div>
@@ -198,8 +234,14 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
         </div>
 
         {/* Test Result Banner */}
+        {testingProvider && (
+          <div role="status" className="p-3 rounded-xl border border-slate-700 bg-slate-800/50 text-xs flex items-center justify-between gap-3">
+            <span className="flex items-center gap-2"><RefreshCw className="w-4 h-4 animate-spin" />正在测试连接…</span>
+            <button type="button" onClick={cancelConnectionTest} className="text-slate-300 hover:text-white underline underline-offset-4">取消测试</button>
+          </div>
+        )}
         {testResult && (
-          <div className={`p-3 rounded-xl border text-xs flex items-center justify-between ${
+          <div role="status" className={`p-3 rounded-xl border text-xs flex items-center justify-between ${
             testResult.ok ? 'bg-green-950/40 border-green-800/80 text-green-200' : 'bg-red-950/40 border-red-800/80 text-red-200'
           }`}>
             <div className="flex items-center gap-2">
@@ -219,7 +261,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
               <label className="text-xs font-semibold text-slate-300 block mb-2">选择当前主推理后端：</label>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 <button
-                  onClick={() => setConfig({ ...config, activeProvider: 'gemini' })}
+                  onClick={() => updateConfig(config => ({ ...config, activePreset: 'custom', activeProvider: 'gemini' }))}
                   className={`p-3 rounded-xl border text-left transition text-xs flex flex-col justify-between gap-2 ${
                     config.activeProvider === 'gemini'
                       ? 'bg-purple-950/60 border-purple-500 text-white shadow-lg'
@@ -237,7 +279,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                 </button>
 
                 <button
-                  onClick={() => setConfig({ ...config, activeProvider: 'ollama' })}
+                  onClick={() => updateConfig(config => ({ ...config, activePreset: 'custom', activeProvider: 'ollama' }))}
                   className={`p-3 rounded-xl border text-left transition text-xs flex flex-col justify-between gap-2 ${
                     config.activeProvider === 'ollama'
                       ? 'bg-purple-950/60 border-purple-500 text-white shadow-lg'
@@ -255,7 +297,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                 </button>
 
                 <button
-                  onClick={() => setConfig({ ...config, activeProvider: 'openai_compatible' })}
+                  onClick={() => updateConfig(config => ({ ...config, activePreset: 'custom', activeProvider: 'openai_compatible' }))}
                   className={`p-3 rounded-xl border text-left transition text-xs flex flex-col justify-between gap-2 ${
                     config.activeProvider === 'openai_compatible'
                       ? 'bg-purple-950/60 border-purple-500 text-white shadow-lg'
@@ -274,23 +316,34 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
               </div>
             </div>
 
+            <p className="text-[11px] text-slate-400">连接测试可随时取消。Gemini 和兼容接口会发送一条简短生成请求，可能产生费用；Ollama 仅检查服务及所选模型是否已安装。</p>
             {/* Provider Details */}
             {config.activeProvider === 'gemini' && (
               <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800 space-y-3 text-xs">
                 <div className="flex items-center justify-between">
-                  <div className="font-semibold text-slate-200">Gemini 2.5 Flash 原生引擎</div>
+                  <div className="font-semibold text-slate-200">Gemini / Vertex AI 连接</div>
                   <button
                     onClick={() => handleTestConnection('gemini')}
                     disabled={testingProvider === 'gemini'}
                     className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-purple-300 rounded border border-slate-700 flex items-center gap-1 transition"
                   >
                     <RefreshCw className={`w-3 h-3 ${testingProvider === 'gemini' ? 'animate-spin' : ''}`} />
-                    测试连通性
+                    {testingProvider === 'gemini' ? '测试中…' : '测试连通性'}
                   </button>
                 </div>
                 <p className="text-slate-400 text-[11px]">
-                  使用 Gemini 模型；连接测试可确认当前环境中的模型与密钥是否可用。
+                  使用当前部署环境配置的 Gemini / Vertex AI 认证；Vertex AI 的 ADC 凭据由代理服务读取。连接测试会验证所填模型能否生成内容。
                 </p>
+                <p className="text-slate-400 text-[11px]">Gemini 2.5 Pro 不支持关闭思考；原有关闭设置会按最低 128 个思考 token 运行。</p>
+                <div>
+                  <label className="text-[11px] text-slate-400 block mb-1">模型名称</label>
+                  <input aria-label="Gemini 模型名称"
+                    type="text"
+                    value={config.gemini.model}
+                    onChange={e => updateConfig(config => ({ ...config, gemini: { ...config.gemini, model: e.target.value } }))}
+                    className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-xs text-white outline-none"
+                  />
+                </div>
               </div>
             )}
 
@@ -304,7 +357,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                     className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-emerald-300 rounded border border-slate-700 flex items-center gap-1 transition"
                   >
                     <RefreshCw className={`w-3 h-3 ${testingProvider === 'ollama' ? 'animate-spin' : ''}`} />
-                    测试连通性
+                    {testingProvider === 'ollama' ? '测试中…' : '测试连通性'}
                   </button>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -313,7 +366,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                     <input aria-label="Ollama 服务地址"
                       type="text"
                       value={config.ollama.baseUrl}
-                      onChange={e => setConfig({ ...config, ollama: { ...config.ollama, baseUrl: e.target.value } })}
+                      onChange={e => updateConfig(config => ({ ...config, ollama: { ...config.ollama, baseUrl: e.target.value } }))}
                       className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-xs text-white outline-none"
                     />
                   </div>
@@ -322,7 +375,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                     <input aria-label="Ollama 模型名称"
                       type="text"
                       value={config.ollama.model}
-                      onChange={e => setConfig({ ...config, ollama: { ...config.ollama, model: e.target.value } })}
+                      onChange={e => updateConfig(config => ({ ...config, ollama: { ...config.ollama, model: e.target.value } }))}
                       className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-xs text-white outline-none"
                     />
                   </div>
@@ -335,7 +388,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                     max="32768"
                     step="2048"
                     value={config.ollama.contextLength}
-                    onChange={e => setConfig({ ...config, ollama: { ...config.ollama, contextLength: parseInt(e.target.value) || 8192 } })}
+                    onChange={e => updateConfig(config => ({ ...config, activePreset: 'custom', ollama: { ...config.ollama, contextLength: parseInt(e.target.value) || 8192 } }))}
                     className="w-full accent-emerald-500"
                   />
                   <div className="flex justify-between text-[10px] text-slate-500 mt-1">
@@ -357,7 +410,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                     className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-blue-300 rounded border border-slate-700 flex items-center gap-1 transition"
                   >
                     <RefreshCw className={`w-3 h-3 ${testingProvider === 'openai_compatible' ? 'animate-spin' : ''}`} />
-                    测试连通性
+                    {testingProvider === 'openai_compatible' ? '测试中…' : '测试连通性'}
                   </button>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -366,7 +419,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                     <input aria-label="兼容接口服务地址"
                       type="text"
                       value={config.openaiCompatible.baseUrl}
-                      onChange={e => setConfig({ ...config, openaiCompatible: { ...config.openaiCompatible, baseUrl: e.target.value } })}
+                      onChange={e => updateConfig(config => ({ ...config, openaiCompatible: { ...config.openaiCompatible, baseUrl: e.target.value } }))}
                       className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-xs text-white outline-none"
                     />
                   </div>
@@ -375,7 +428,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                     <input aria-label="兼容接口模型名称"
                       type="text"
                       value={config.openaiCompatible.model}
-                      onChange={e => setConfig({ ...config, openaiCompatible: { ...config.openaiCompatible, model: e.target.value } })}
+                      onChange={e => updateConfig(config => ({ ...config, openaiCompatible: { ...config.openaiCompatible, model: e.target.value } }))}
                       className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-xs text-white outline-none"
                     />
                   </div>
@@ -385,7 +438,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                   <input aria-label="兼容接口 API Key"
                     type="password"
                     value={config.openaiCompatible.apiKey}
-                    onChange={e => setConfig({ ...config, openaiCompatible: { ...config.openaiCompatible, apiKey: e.target.value } })}
+                    onChange={e => updateConfig(config => ({ ...config, openaiCompatible: { ...config.openaiCompatible, apiKey: e.target.value } }))}
                     className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-xs text-white font-mono outline-none"
                   />
                 </div>
@@ -418,7 +471,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                   max="1.5"
                   step="0.05"
                     value={config.sampling.temperature}
-                  onChange={e => setConfig({ ...config, sampling: { ...config.sampling, temperature: parseFloat(e.target.value) } })}
+                  onChange={e => updateConfig(config => ({ ...config, activePreset: 'custom', sampling: { ...config.sampling, temperature: parseFloat(e.target.value) } }))}
                   className="w-full accent-purple-500"
                 />
               </div>
@@ -437,7 +490,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                   max="1.4"
                   step="0.02"
                     value={config.sampling.repetitionPenalty}
-                  onChange={e => setConfig({ ...config, sampling: { ...config.sampling, repetitionPenalty: parseFloat(e.target.value) } })}
+                  onChange={e => updateConfig(config => ({ ...config, activePreset: 'custom', sampling: { ...config.sampling, repetitionPenalty: parseFloat(e.target.value) } }))}
                   className="w-full accent-purple-500"
                 />
                 <span className="text-[10px] text-slate-500 block mt-0.5">
@@ -457,7 +510,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                   max="1.0"
                   step="0.02"
                     value={config.sampling.topP}
-                  onChange={e => setConfig({ ...config, sampling: { ...config.sampling, topP: parseFloat(e.target.value) } })}
+                  onChange={e => updateConfig(config => ({ ...config, activePreset: 'custom', sampling: { ...config.sampling, topP: parseFloat(e.target.value) } }))}
                   className="w-full accent-purple-500"
                 />
               </div>
@@ -474,7 +527,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                   max="100"
                   step="5"
                     value={config.sampling.topK}
-                  onChange={e => setConfig({ ...config, sampling: { ...config.sampling, topK: parseInt(e.target.value) || 40 } })}
+                  onChange={e => updateConfig(config => ({ ...config, activePreset: 'custom', sampling: { ...config.sampling, topK: parseInt(e.target.value) || 40 } }))}
                   className="w-full accent-purple-500"
                 />
               </div>
@@ -491,7 +544,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                   max="1.0"
                   step="0.05"
                     value={config.sampling.frequencyPenalty}
-                  onChange={e => setConfig({ ...config, sampling: { ...config.sampling, frequencyPenalty: parseFloat(e.target.value) } })}
+                  onChange={e => updateConfig(config => ({ ...config, activePreset: 'custom', sampling: { ...config.sampling, frequencyPenalty: parseFloat(e.target.value) } }))}
                   className="w-full accent-purple-500"
                 />
               </div>
@@ -508,7 +561,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                   max="6000"
                   step="250"
                     value={config.sampling.maxTokens}
-                  onChange={e => setConfig({ ...config, sampling: { ...config.sampling, maxTokens: parseInt(e.target.value) || 2500 } })}
+                  onChange={e => updateConfig(config => ({ ...config, activePreset: 'custom', sampling: { ...config.sampling, maxTokens: parseInt(e.target.value) || 2500 } }))}
                   className="w-full accent-purple-500"
                 />
               </div>
@@ -530,10 +583,11 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                 </p>
               </div>
               <button
-                onClick={() => setConfig({
+                onClick={() => updateConfig(config => ({
                   ...config,
+                  activePreset: 'custom',
                   authorsNote: { ...config.authorsNote, enabled: !config.authorsNote.enabled }
-                })}
+                }))}
                 className={`px-3 py-1 rounded-full font-medium transition ${
                   config.authorsNote.enabled ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-400'
                 }`}
@@ -547,10 +601,11 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
               <textarea aria-label="作者附注内容"
                 rows={4}
                     value={config.authorsNote.content}
-                onChange={e => setConfig({
+                onChange={e => updateConfig(config => ({
                   ...config,
+                  activePreset: 'custom',
                   authorsNote: { ...config.authorsNote, content: e.target.value }
-                })}
+                }))}
                 placeholder="例如：[作者附注：行文沉郁冷峻；重点展现寒夜微弱炉火与雨声；绝对禁止角色产生超越其自身认知的言行]"
                 className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-xs text-white outline-none focus:border-purple-500 leading-relaxed font-serif"
               />
@@ -568,13 +623,17 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
         {activeTab === 'PRESETS' && (
           <div className="space-y-3 text-xs">
             <div className="text-slate-400 mb-2">
-              针对不同模型与硬件特点，一键调校最适宜的采样器矩阵与附注：
+              一键应用生成参数与作者附注，再点击“保存设置”。Ollama、DeepSeek、Gemini 方案会切换对应后端，保留已配置的端点、密钥和模型名称。
             </div>
+            <p role="status" className="text-slate-300">
+              当前方案：{config.activePreset === 'custom' ? '自定义' : presetLabels[config.activePreset]}
+            </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button type="button"
                 onClick={() => handleApplyPreset('sillytavern_literary')}
-                className="text-left p-4 bg-slate-950/60 border border-slate-800 hover:border-purple-500 rounded-xl cursor-pointer transition space-y-2 group"
+                aria-pressed={config.activePreset === 'sillytavern_literary'}
+                className={`text-left p-4 border rounded-xl cursor-pointer transition space-y-2 group ${config.activePreset === 'sillytavern_literary' ? 'bg-purple-950/60 border-purple-500 ring-1 ring-purple-500' : 'bg-slate-950/60 border-slate-800 hover:border-purple-500'}`}
               >
                 <div className="flex items-center justify-between font-semibold text-white">
                   <span className="flex items-center gap-1.5 text-purple-300">
@@ -582,7 +641,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                     古典文学
                   </span>
                   <span className="text-[10px] bg-purple-950 text-purple-300 px-2 py-0.5 rounded border border-purple-800">
-                    风格预设
+                    {config.activePreset === 'sillytavern_literary' ? '✓ 已选择' : '风格预设'}
                   </span>
                 </div>
                 <p className="text-slate-400 text-[11px] leading-relaxed">
@@ -592,7 +651,8 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
 
               <button type="button"
                 onClick={() => handleApplyPreset('ollama_arm_efficient')}
-                className="text-left p-4 bg-slate-950/60 border border-slate-800 hover:border-emerald-500 rounded-xl cursor-pointer transition space-y-2 group"
+                aria-pressed={config.activePreset === 'ollama_arm_efficient'}
+                className={`text-left p-4 border rounded-xl cursor-pointer transition space-y-2 group ${config.activePreset === 'ollama_arm_efficient' ? 'bg-emerald-950/60 border-emerald-500 ring-1 ring-emerald-500' : 'bg-slate-950/60 border-slate-800 hover:border-emerald-500'}`}
               >
                 <div className="flex items-center justify-between font-semibold text-white">
                   <span className="flex items-center gap-1.5 text-emerald-300">
@@ -600,7 +660,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                     Ollama 本地写作
                   </span>
                   <span className="text-[10px] bg-emerald-950 text-emerald-300 px-2 py-0.5 rounded border border-emerald-800">
-                    本地推理
+                    {config.activePreset === 'ollama_arm_efficient' ? '✓ 已选择' : '本地推理'}
                   </span>
                 </div>
                 <p className="text-slate-400 text-[11px] leading-relaxed">
@@ -610,7 +670,8 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
 
               <button type="button"
                 onClick={() => handleApplyPreset('deepseek_causality')}
-                className="text-left p-4 bg-slate-950/60 border border-slate-800 hover:border-blue-500 rounded-xl cursor-pointer transition space-y-2 group"
+                aria-pressed={config.activePreset === 'deepseek_causality'}
+                className={`text-left p-4 border rounded-xl cursor-pointer transition space-y-2 group ${config.activePreset === 'deepseek_causality' ? 'bg-blue-950/60 border-blue-500 ring-1 ring-blue-500' : 'bg-slate-950/60 border-slate-800 hover:border-blue-500'}`}
               >
                 <div className="flex items-center justify-between font-semibold text-white">
                   <span className="flex items-center gap-1.5 text-blue-300">
@@ -618,7 +679,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                     DeepSeek 逻辑推演
                   </span>
                   <span className="text-[10px] bg-blue-950 text-blue-300 px-2 py-0.5 rounded border border-blue-800">
-                    悬疑硬核
+                    {config.activePreset === 'deepseek_causality' ? '✓ 已选择' : '悬疑硬核'}
                   </span>
                 </div>
                 <p className="text-slate-400 text-[11px] leading-relaxed">
@@ -628,7 +689,8 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
 
               <button type="button"
                 onClick={() => handleApplyPreset('gemini_epic')}
-                className="text-left p-4 bg-slate-950/60 border border-slate-800 hover:border-purple-500 rounded-xl cursor-pointer transition space-y-2 group"
+                aria-pressed={config.activePreset === 'gemini_epic'}
+                className={`text-left p-4 border rounded-xl cursor-pointer transition space-y-2 group ${config.activePreset === 'gemini_epic' ? 'bg-purple-950/60 border-purple-500 ring-1 ring-purple-500' : 'bg-slate-950/60 border-slate-800 hover:border-purple-500'}`}
               >
                 <div className="flex items-center justify-between font-semibold text-white">
                   <span className="flex items-center gap-1.5 text-purple-300">
@@ -636,7 +698,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                     Gemini 长篇起草
                   </span>
                   <span className="text-[10px] bg-purple-950 text-purple-300 px-2 py-0.5 rounded border border-purple-800">
-                    大画幅
+                    {config.activePreset === 'gemini_epic' ? '✓ 已选择' : '大画幅'}
                   </span>
                 </div>
                 <p className="text-slate-400 text-[11px] leading-relaxed">
@@ -655,7 +717,7 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
 
           <div className="flex gap-2">
             <button
-              onClick={onClose}
+              onClick={handleClose}
               className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition"
             >
               取消

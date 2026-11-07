@@ -40,7 +40,7 @@ export interface AuthorsNoteConfig {
 
 export interface AIProviderConfig {
   activeProvider: AIProviderType;
-  activePreset: AIPresetType;
+  activePreset: AIPresetType | 'custom';
   sampling: SamplingParams;
   authorsNote: AuthorsNoteConfig;
 
