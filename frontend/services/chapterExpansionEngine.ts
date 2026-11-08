@@ -27,6 +27,8 @@ export class ChapterExpansionEngine {
     const { project, volumeNumber, chapterNumber, povCharacterId, events, userConstraint, onProgress } = params;
 
     const povChar = project.characters.find(c => c.id === povCharacterId) || project.characters[0];
+    const viewpoint = povChar?.name || '未指定人物，请依据作品简介与本章要求安排视角';
+    const authorsNote = project.aiConfig.authorsNote.enabled ? project.aiConfig.authorsNote.content : undefined;
 
     // Scan Lorebook
     const scanContexts = [
@@ -38,19 +40,21 @@ export class ChapterExpansionEngine {
     const { activated } = LorebookService.scanAndActivate(project.lorebook || [], scanContexts);
     const lorebookBlock = LorebookService.formatLorebookPrompt(activated);
 
-    const eventsBrief = events.map(e => `[${e.simulationTime}] @${e.locationId} 事件:${e.title} -> ${e.description}`).join('\n') || '各方在既定空间审时度势，暗潮汹涌。';
+    const eventsBrief = events.map(e => `[${e.simulationTime}] @${e.locationId} 事件:${e.title} -> ${e.description}`).join('\n') || '尚无模拟事件，请依据作品简介与本章要求创作，不沿用其他作品设定。';
     const rulesBrief = project.rules.map(r => `[${r.category}] ${r.rule}`).join('\n');
 
     // 1. Generate Master Outline for 4 Acts
     onProgress?.(0, '规划四幕细纲', 0, '正在将世界事件分解为四幕长篇架构...');
     const outlinePrompt = `请为长篇小说《${project.title}》第${volumeNumber}卷 第${chapterNumber}章设计包含四幕的详细扩写大纲。
-视点人物：${povChar?.name} (${povChar?.title})
+题材：${project.genre} | 文风：${project.settings.literaryStyle}
+作品简介：${project.authorNote || '尚未填写，以本章要求为准'}
+视点人物：${viewpoint}${povChar?.title ? ` (${povChar.title})` : ''}
 真实世界事件：
 ${eventsBrief}
-创作者要求：${userConstraint || '细腻沉郁，注重环境音画与弦外之音'}
+创作者要求：${userConstraint || '遵循作品简介、所选文风与作者附注，保持人物与情节一致'}
 
 请输出：
-TITLE: [本章古朴典雅标题]
+TITLE: [符合本书题材与文风的章节标题]
 SUMMARY: [本章100字梗概]
 ACT1: [第一幕·起：铺陈展开，字数指标1100字]
 ACT2: [第二幕·承：对话试探与暗流，字数指标1200字]
@@ -61,6 +65,7 @@ ACT4: [第四幕·合：余韵收束与沉思，字数指标1000字]`;
       prompt: outlinePrompt,
       systemInstruction: '你是一位精通超长篇巨著结构规划的小说架构大师。',
       lorebookBlock,
+      authorsNote,
       thinkingBudget: 0,
     });
 
@@ -72,16 +77,16 @@ ACT4: [第四幕·合：余韵收束与沉思，字数指标1000字]`;
     // ACT 1 (起)
     onProgress?.(1, '第一幕·起 (环境与感知铺垫)', accumulatedContent.length, '执笔第一幕，深描场景细节与人物心境...');
     const act1Prompt = `【超长篇创作·第一幕（起）执笔】
-全书背景：${project.worldName} | 题材：${project.genre} | 文风：${project.settings.literaryStyle}
+全书背景：${project.worldName || project.title} | 题材：${project.genre} | 文风：${project.settings.literaryStyle}
 本章标题：${parsedOutline.title}
-视点主角：${povChar?.name} (心境:${povChar?.currentMood}, 欲求:${povChar?.coreDesire})
+视点主角：${viewpoint} (心境:${povChar?.currentMood || '未设定'}, 欲求:${povChar?.coreDesire || '依本章要求确定'})
 世界规则约束：\n${rulesBrief}
 
 【第一幕大纲任务】：
 ${parsedOutline.actOutlines[0]}
 
 【硬性要求】：
-1. 极尽细腻地展开第一幕正文，深入刻画场景光线、冷热雨雪气味、衣袍质感与主角心头沉思。
+1. 依据本书题材与文风展开第一幕，描写符合当前场景的感知、行动与人物心境。
 2. 禁止快餐式略写，本幕实际字数必须达到 1000~1200 汉字。
 3. 直接输出第一幕正文，不加任何前言或总结。`;
 
@@ -99,7 +104,7 @@ ${parsedOutline.actOutlines[0]}
 承接前文剧情：
 “...${accumulatedContent.slice(-400)}”
 
-视点主角：${povChar?.name}
+视点主角：${viewpoint}
 【第二幕大纲任务】：
 ${parsedOutline.actOutlines[1]}
 
@@ -124,13 +129,13 @@ ${parsedOutline.actOutlines[1]}
 承接前文剧情：
 “...${accumulatedContent.slice(-400)}”
 
-视点主角：${povChar?.name}
+视点主角：${viewpoint}
 【第三幕大纲任务】：
 ${parsedOutline.actOutlines[2]}
 
 【硬性要求】：
 1. 承接前文，将矛盾或悬念推向实质性转折，发生实质性事件接触或情绪剧变。
-2. 保持文风典雅，拒绝小白套路。
+2. 保持本书指定的文风与作者附注，不擅自改变题材。
 3. 本幕实际字数必须达到 1100~1300 汉字。
 4. 直接输出第三幕正文。`;
 
@@ -148,12 +153,12 @@ ${parsedOutline.actOutlines[2]}
 承接前文剧情：
 “...${accumulatedContent.slice(-400)}”
 
-视点主角：${povChar?.name}
+视点主角：${viewpoint}
 【第四幕大纲任务】：
 ${parsedOutline.actOutlines[3]}
 
 【硬性要求】：
-1. 局面逐渐在风雨或夜色中沉淀下来，描写主角独处时的心境涟漪、对当下局势的清醒评估。
+1. 依本章情节自然收束，保持既有时间、地点与人物动机一致。
 2. 留下令人回味的悬念，使全章在此处圆融定格，为下一章埋下伏笔。
 3. 本幕实际字数必须达到 1000~1200 汉字。
 4. 直接输出第四幕正文。`;
@@ -172,17 +177,19 @@ ${parsedOutline.actOutlines[3]}
       const neededWords = 4200 - accumulatedContent.length;
       const extensionPrompt = `【篇章景深扩充】
 当前第四幕收束后，请为本章补充一段长篇视界延伸描写（约 ${neededWords + 300} 字）：
-聚焦在深夜听雨居与整座黑石城的风雨长街、城关烽火残烟、远处更夫敲击的梆子声以及主角在油灯下的更深层沉思。
+作品：${project.title} | 题材：${project.genre} | 文风：${project.settings.literaryStyle}
+依据本章既有地点、人物与情节，补充必要的场景、人物反应或过渡；不得引入其他作品的地名、人物或设定。
 承接前文：“...${accumulatedContent.slice(-300)}”
 必须自然衔接，扩充文本真实厚度，直接输出补充段落。`;
 
       const extText = await AIProviderService.generateText(project.aiConfig, {
         prompt: extensionPrompt,
         lorebookBlock,
+        authorsNote,
       });
       if (extText.trim().length > 100) {
         accumulatedContent += '\n\n' + extText.trim();
-        beats.push({ actIndex: 5, actName: '卷尾长镜头延展', outline: '风雪长街全景沉淀', content: extText.trim(), wordCount: extText.trim().length });
+        beats.push({ actIndex: 5, actName: '章节补充延展', outline: '补充本章场景与情节衔接', content: extText.trim(), wordCount: extText.trim().length });
       }
     }
 
@@ -197,14 +204,9 @@ ${parsedOutline.actOutlines[3]}
   }
 
   private static parseMasterOutline(text: string, chapNum: number) {
-    let title = `第${chapNum}章 夜雨寒关客影沉`;
-    let summary = '多方势力在寒江边城首度试探，因果暗流涌现。';
-    const actOutlines: string[] = [
-      '第一幕：暴雨倾盆，冷雨与炉火形成鲜明对比，视点人物感知全场异动。',
-      '第二幕：言语试探，官吏与客商交锋，空气中隐现刀兵杀气。',
-      '第三幕：突发线索打破僵局，某人随身之物引起全堂警惕。',
-      '第四幕：风雪锁城，更鼓沉沉，各方在暗夜中心事重重，大幕拉开。',
-    ];
+    let title = '';
+    let summary = '';
+    const actOutlines: string[] = ['', '', '', ''];
 
     const lines = text.split('\n');
     lines.forEach(line => {
@@ -217,6 +219,7 @@ ${parsedOutline.actOutlines[3]}
       if (trimmed.startsWith('ACT4:')) actOutlines[3] = trimmed.replace('ACT4:', '').trim();
     });
 
+    if (!title || !summary || actOutlines.some(outline => !outline)) throw new Error(`第${chapNum}章的 AI 生成大纲为空或不完整，请重新生成。`);
     return { title, summary, actOutlines };
   }
 }

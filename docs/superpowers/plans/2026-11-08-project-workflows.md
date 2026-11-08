@@ -1,0 +1,17 @@
+# Project creation and truthful workflows
+
+User reports missing new-book support, invisible pipeline preset changes and misleading A/B/C modes. Preserve existing manuscripts; work in the current checkout.
+
+- Create truly empty project records with independent IDs, title/genre/premise and no sample story data. Initial fresh startup uses a blank project; keep loading existing legacy records. Provide a book library to create and switch books, with an explicit optional connection-only copy. Save the current full manuscript durably before activating another book; if durable browser storage fails, keep the current book and show a recovery error. Serialize writes and block stale editor callbacks during transitions.
+- Render a live effective AI configuration panel on the chapter pipeline, including preset, provider/model, sampling and enabled author note. Explain that settings apply to subsequent calls, not existing text. Add regression coverage of real generated requests using the selected configuration.
+- Expose Mode A (batch chapter pipeline), B (single-chapter human/AI writing), and C (local rule simulation) as real navigation/actions. Switching never starts inference. Replace always-running and AI-source claims with truthful stopped/running state and local-engine explanation. Test actual simulation changes and timer pause/unmount behavior; no live AI calls.
+- New books can start manually without characters/world setup. AI generation should use supplied premise/requirements and never the demo manuscript; blank generation requires a premise or author request. Preserve chapter numbering and blank chapter content.
+- Verify factory/backup validity, old/new book isolation, storage failure safety, restart/switch round trips, configuration visibility/request propagation, and UI handlers using the existing Node/React callback harness. Run full checks and production smoke. Browser host was unavailable in the previous turn; do not claim browser QA without a fresh successful run.
+
+## Review and verification notes
+
+- Fresh computer-use inventory again returned no browser/native host. Browser layout, actual click/focus behavior and live model calls cannot be claimed as verified.
+- Independent review found two consequential issues: queued persistence delayed the synchronous pagehide snapshot, and batch Mode A omitted author instructions. Both were reproduced by failing regressions and fixed: fallback snapshots are captured synchronously with monotonic revisions; only IndexedDB writes are queued, and author instructions/previous manuscript context are passed into each batch request.
+- Added an import isolation regression: backups from another book become independent copies instead of overwriting an existing book ID. Failed new-book writes retain the full previous manuscript, including books longer than the local snapshot window; the write queue recovers after a failed operation.
+- Removed authored demo plot fallback and continuation instructions from the four-act engine. Invalid outlines now fail before prose generation; new-book premise and enabled author notes reach outline, prose and extension requests. Mode C state-change records now match actual resource/mood changes and generic scene descriptions.
+- Final `npm run check`: exit 0, 136 frontend + 19 backend + 4 delivery tests passed (159 total), typecheck and Vite production build passed. Real local production HTTP smoke passed health/readiness, entry HTML, three assets and disabled proxy boundaries. No live provider inference was used.

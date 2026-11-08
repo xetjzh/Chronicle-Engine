@@ -24,18 +24,28 @@ export const WorldSimConsole: React.FC<WorldSimConsoleProps> = ({
   const [selectedLocationId, setSelectedLocationId] = useState<string>('all');
   const [snapshotNameInput, setSnapshotNameInput] = useState('');
   const [notification, setNotification] = useState<string | null>(null);
+  const latestProject = useRef(project);
+  const latestCallback = useRef(onUpdateProject);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  latestProject.current = project;
+  latestCallback.current = onUpdateProject;
+  const canSimulate = project.characters.some(character => character.isAlive && project.locations.some(location => location.id === character.currentLocationId));
 
   // Auto-simulation ticker ref
   const autoSimRef = useRef<number | null>(null);
 
   const showToast = (msg: string) => {
     setNotification(msg);
-    setTimeout(() => setNotification(null), 3000);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setNotification(null), 3000);
   };
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+  useEffect(() => { if (!canSimulate) setIsAutoSimulating(false); }, [canSimulate]);
 
   const handleStepHours = (hours: number) => {
-    const { updatedProject, newEvents } = SimulationEngine.stepTime(project, hours);
-    onUpdateProject(updatedProject);
+    const { updatedProject, newEvents } = SimulationEngine.stepTime(latestProject.current, hours);
+    latestProject.current = updatedProject;
+    latestCallback.current(updatedProject);
     if (newEvents.length > 0) {
       setSelectedEvent(newEvents[newEvents.length - 1]);
       showToast(`推进成功！产生了 ${newEvents.length} 起新历史事件。`);
@@ -46,9 +56,9 @@ export const WorldSimConsole: React.FC<WorldSimConsoleProps> = ({
 
   // Continuous auto simulation ticker
   useEffect(() => {
-    if (isAutoSimulating) {
+    if (isAutoSimulating && canSimulate) {
       autoSimRef.current = window.setInterval(() => {
-        handleStepHours(4);
+        try { handleStepHours(4); } catch { setIsAutoSimulating(false); showToast('模拟已停止，请检查人物和地点设定。'); }
       }, 3500);
     } else if (autoSimRef.current) {
       clearInterval(autoSimRef.current);
@@ -56,20 +66,24 @@ export const WorldSimConsole: React.FC<WorldSimConsoleProps> = ({
     return () => {
       if (autoSimRef.current) clearInterval(autoSimRef.current);
     };
-  }, [isAutoSimulating, project]);
+  }, [isAutoSimulating, canSimulate]);
 
   const handleCreateSnapshot = () => {
     if (!snapshotNameInput.trim()) return;
-    const updated = storageService.createSnapshot(project, snapshotNameInput, '创作者手动存盘点');
-    onUpdateProject(updated);
+    const updated = storageService.createSnapshot(latestProject.current, snapshotNameInput, '创作者手动存盘点');
+    latestProject.current = updated;
+    latestCallback.current(updated);
     setSnapshotNameInput('');
     showToast('世界状态快照已保存！可随时安全回滚。');
   };
 
   const handleRestoreSnapshot = (snapId: string) => {
+    setIsAutoSimulating(false);
     if (window.confirm('确定要将当前世界回滚至此历史快照吗？当前快照之后发生的事件将被折叠。')) {
-      const updated = storageService.restoreSnapshot(project, snapId);
-      onUpdateProject(updated);
+      const updated = storageService.restoreSnapshot(latestProject.current, snapId);
+      latestProject.current = updated;
+      latestCallback.current(updated);
+      setSelectedEvent(updated.events[updated.events.length - 1] || null);
       showToast('世界状态已精准回滚！');
     }
   };
@@ -80,6 +94,7 @@ export const WorldSimConsole: React.FC<WorldSimConsoleProps> = ({
 
   return (
     <div className="space-y-6">
+      <p className="rounded-xl border border-slate-800 bg-slate-900 p-4 text-xs leading-6 text-slate-400">模式 C 按人物状态、关系和地点连接生成规则事件，不是大模型自主推理。手动推进会改变模拟时间，开启后每 3.5 秒推进 4 小时；离开本页会停止。{!canSimulate && ' 请先在世界法则添加地点，再在人物档案添加存活人物并分配到该地点；当前只能推进时钟。'}</p>
       {notification && (
         <div className="fixed bottom-6 right-6 z-50 bg-purple-600 text-white px-4 py-3 rounded-lg shadow-xl flex items-center gap-2 text-sm animate-bounce">
           <Sparkles className="w-4 h-4" />
@@ -93,10 +108,10 @@ export const WorldSimConsole: React.FC<WorldSimConsoleProps> = ({
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-900/60 text-purple-300 border border-purple-700/50">
-                模式 C: 自主世界运行中
+                模式 C · 本地规则模拟 · {isAutoSimulating ? '运行中' : '已暂停'}
               </span>
               <span className="text-xs text-slate-400">
-                当前推理源: <strong className="text-purple-300 font-mono">{project.aiConfig?.activeProvider.toUpperCase() || 'GEMINI'}</strong>
+                运行引擎：本地规则，不调用 AI
               </span>
               {isAutoSimulating && (
                 <span className="inline-flex items-center gap-1 text-[10px] text-green-400 bg-green-950 px-2 py-0.5 rounded border border-green-800 animate-pulse">
@@ -119,6 +134,7 @@ export const WorldSimConsole: React.FC<WorldSimConsoleProps> = ({
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => setIsAutoSimulating(!isAutoSimulating)}
+              disabled={!canSimulate && !isAutoSimulating}
               className={`px-3.5 py-2 text-xs font-semibold rounded-lg shadow-sm transition flex items-center gap-1.5 ${
                 isAutoSimulating ? 'bg-amber-600 hover:bg-amber-500 text-white' : 'bg-emerald-600 hover:bg-emerald-500 text-white'
               }`}
@@ -140,7 +156,7 @@ export const WorldSimConsole: React.FC<WorldSimConsoleProps> = ({
               className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-lg border border-slate-700 transition flex items-center gap-1.5"
             >
               <Play className="w-3.5 h-3.5 text-purple-400" />
-              推进一刻 (2小时)
+              推进 2 小时
             </button>
             <button
               onClick={() => handleStepHours(8)}

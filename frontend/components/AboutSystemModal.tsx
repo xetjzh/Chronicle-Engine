@@ -172,9 +172,9 @@ docker exec -it chronicle-ollama ollama pull qwen2.5:7b-instruct-q4_K_M`;
                     选择适合此刻的创作方式
                   </div>
                   <p className="text-slate-400">
-                    <strong>模式 A (全自动演化)</strong>：多卷大纲与章节自动推演；<br />
-                    <strong>模式 B (人机协同创作)</strong>：作者握有最高决策权，AI 负责文学润色与分歧探索；<br />
-                    <strong>模式 C (自主世界模拟)</strong>：核心自驱系统，静观人物生活。
+                    <strong>模式 A (自动成书)</strong>：点击启动后逐章推进事件并调用已配置的 AI 生成四幕草稿；<br />
+                    <strong>模式 B (人机共写)</strong>：作者手写、编辑与审阅，按需调用单章生成、润色和续写；<br />
+                    <strong>模式 C (本地规则模拟)</strong>：手动或定时推进人物状态和事件，不调用大模型；暂停或离开页面即停止。
                   </p>
                 </div>
 

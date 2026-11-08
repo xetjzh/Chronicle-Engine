@@ -36,6 +36,46 @@ function chapterParams(project) {
   return { project, volumeNumber: 1, chapterNumber: 2, events: project.events, povCharacterId: project.characters[0].id };
 }
 
+test('a blank new book uses its own premise and selected AI settings throughout the chapter pipeline', async () => {
+  const calls = [];
+  const { createEmptyProject } = require('./projectFactory.ts');
+  const book = createEmptyProject('new-book', { title: '星际来信', genre: '科幻', premise: '船员寻找失联飞船' });
+  book.aiConfig.sampling.temperature = 0.37;
+  book.aiConfig.authorsNote = { enabled: true, content: '使用简洁的现代科幻叙述', insertionDepth: 1 };
+  const { GeminiService } = service(async (config, options) => {
+    calls.push({ config, options });
+    return calls.length === 1 ? 'TITLE: 信号\nSUMMARY: 寻找飞船\nACT1: 出发\nACT2: 搜索\nACT3: 发现\nACT4: 决定' : '星'.repeat(1100);
+  });
+  await GeminiService.generateChapter({ project: book, volumeNumber: 1, chapterNumber: 1, events: [] });
+  assert.match(calls[0].options.prompt, /船员寻找失联飞船/);
+  assert.match(calls[0].options.prompt, /科幻/);
+  assert.doesNotMatch(calls[0].options.prompt, /undefined|古朴典雅/);
+  for (const { config, options } of calls) {
+    assert.equal(config.sampling.temperature, 0.37);
+    assert.equal(options.authorsNote, '使用简洁的现代科幻叙述');
+    assert.equal(options.overrideSampling?.temperature, undefined);
+  }
+});
+
+test('pipeline extension respects the new book and malformed outlines cannot substitute the old sample story', async () => {
+  const { createEmptyProject } = require('./projectFactory.ts');
+  const book = createEmptyProject('new', { title: '太空调查', genre: '科幻', premise: '寻找无人探测器' });
+  book.aiConfig.authorsNote = { enabled: true, content: '现代科幻语气', insertionDepth: 1 };
+  let calls = 0;
+  const { GeminiService } = service(async (_config, options) => {
+    calls++;
+    assert.doesNotMatch(options.prompt, /听雨居|黑石城|寒关|寒江|undefined/);
+    assert.equal(options.authorsNote, '现代科幻语气');
+    return calls === 1 ? 'TITLE: 探测器\nSUMMARY: 找到信号\nACT1: 起航\nACT2: 调查\nACT3: 发现\nACT4: 抉择' : '星'.repeat(calls === 6 ? 1400 : 750);
+  });
+  await GeminiService.generateChapter({ project: book, volumeNumber: 1, chapterNumber: 1, events: [] });
+  assert.equal(calls, 6);
+  let incompleteCalls = 0;
+  const invalid = service(async () => { incompleteCalls++; return 'TITLE: 只有一个标题'; });
+  await assert.rejects(invalid.GeminiService.generateChapter({ project: book, volumeNumber: 1, chapterNumber: 1, events: [] }), /大纲.*不完整/);
+  assert.equal(incompleteCalls, 1);
+});
+
 test('chapter generation rejects an AI failure instead of returning a fixed story', async () => {
   const { GeminiService, project } = service(async () => { throw new Error('模型连接超时'); });
   await assert.rejects(GeminiService.generateChapter(chapterParams(project)), /模型连接超时/);

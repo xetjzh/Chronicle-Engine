@@ -1,4 +1,4 @@
-import { Character, WorldEvent, ProjectData, LocationNode } from '../types';
+import type { Character, WorldEvent, ProjectData, LocationNode } from '../types';
 
 export class SimulationEngine {
   /**
@@ -14,6 +14,7 @@ export class SimulationEngine {
     project: ProjectData,
     stepHours: number = 4
   ): { updatedProject: ProjectData; newEvents: WorldEvent[] } {
+    if (!Number.isFinite(stepHours) || stepHours <= 0 || stepHours % 2 !== 0) throw new Error('模拟时间请使用正偶数小时。');
     const characters = JSON.parse(JSON.stringify(project.characters)) as Character[];
     const locations = project.locations;
     const existingEvents = [...project.events];
@@ -91,11 +92,13 @@ export class SimulationEngine {
     const currIdx = hourTokens.indexOf(currentToken);
     const steps = Math.floor(addHours / 2) || 1;
     const nextIdx = (currIdx + steps) % hourTokens.length;
-    const basePrefix = currentTime.split(' ')[0] || '天元七年·霜降第十二日';
+    const basePrefix = currentTime.split(' ')[0] || '第1日';
     
     // Day rollover if index loops
     if (currIdx + steps >= hourTokens.length) {
-      return `${basePrefix}(次日) ${hourTokens[nextIdx]}`;
+      const days = Math.floor((currIdx + steps) / hourTokens.length);
+      const prefix = /第\d+日/.test(basePrefix) ? basePrefix.replace(/第(\d+)日/, (_match, day) => `第${Number(day) + days}日`) : `${basePrefix}(${days}日后)`;
+      return `${prefix} ${hourTokens[nextIdx]}`;
     }
     return `${basePrefix} ${hourTokens[nextIdx]}`;
   }
@@ -115,6 +118,7 @@ export class SimulationEngine {
 
     // Determine nature of interaction based on personality, mood & relationship
     if (relAtoB === '怀疑' || relBtoA === '戒备') {
+      const previousMoodA = a.currentMood, previousMoodB = b.currentMood;
       a.currentMood = '警惕';
       b.currentMood = '警惕';
       return {
@@ -126,11 +130,11 @@ export class SimulationEngine {
         participantIds: [a.id, b.id],
         causeEventIds: causes,
         title: `${a.name} 与 ${b.name} 在${loc.name}试探交锋`,
-        description: `${b.name}借故靠近${a.name}盘问来历，双方皆未拔兵刃，但言语锋芒毕露，暗中揣测对方随身行李中的秘辛。`,
-        consequences: [`双方戒备加深`, `${a.name}隐藏了行囊特征`],
+        description: `${a.name}与${b.name}在${loc.name}因既有关系相互试探，对彼此的行动保持警惕。`,
+        consequences: ['双方情绪转为警惕'],
         stateChanges: [
-          { characterId: a.id, field: 'currentMood', oldValue: a.currentMood, newValue: '警惕' },
-          { characterId: b.id, field: 'currentMood', oldValue: b.currentMood, newValue: '警惕' }
+          { characterId: a.id, field: 'currentMood', oldValue: previousMoodA, newValue: '警惕' },
+          { characterId: b.id, field: 'currentMood', oldValue: previousMoodB, newValue: '警惕' }
         ],
         visibility: {
           isPublic: false,
@@ -139,6 +143,9 @@ export class SimulationEngine {
         confirmed: true
       };
     } else if (relAtoB === '照顾' || relAtoB === '旧识') {
+      const amount = Math.min(2, Math.max(0, a.wealth));
+      const oldWealthA = a.wealth, oldWealthB = b.wealth;
+      a.wealth -= amount; b.wealth += amount;
       return {
         id: `evt_${Date.now()}_${Math.floor(Math.random()*1000)}`,
         simulationTime: timeStr,
@@ -148,10 +155,11 @@ export class SimulationEngine {
         participantIds: [a.id, b.id],
         causeEventIds: causes,
         title: `${a.name} 私下向 ${b.name} 传递风声`,
-        description: `在${loc.name}背人处，${a.name}低声提点${b.name}关内风声收紧，并暗中赠予其保命热汤与碎散银两。`,
-        consequences: [`${b.name}获得情报与微量财物`, `双方互信增进`],
+        description: `${a.name}在${loc.name}与${b.name}交流近况，并在力所能及的范围内提供支持。`,
+        consequences: amount ? [`${a.name}向${b.name}转交 ${amount} 单位财物`] : ['完成一次交流，未转交财物'],
         stateChanges: [
-          { characterId: b.id, field: 'wealth', oldValue: b.wealth, newValue: b.wealth + 2 }
+          { characterId: a.id, field: 'wealth', oldValue: oldWealthA, newValue: a.wealth },
+          { characterId: b.id, field: 'wealth', oldValue: oldWealthB, newValue: b.wealth }
         ],
         visibility: {
           isPublic: false,
@@ -171,7 +179,7 @@ export class SimulationEngine {
       participantIds: [a.id, b.id],
       causeEventIds: causes,
       title: `${a.name} 与 ${b.name} 在${loc.name}擦肩而过`,
-      description: `二人在${loc.name}共处片刻，互通三两句边陲风雪闲话，各自提防退后。`,
+      description: `${a.name}与${b.name}在${loc.name}短暂交流，随后各自继续当前事务。`,
       consequences: ['未起冲突，暂归平静'],
       stateChanges: [],
       visibility: {
@@ -203,7 +211,7 @@ export class SimulationEngine {
         participantIds: [char.id],
         causeEventIds: [],
         title: `${char.name} 在${loc.name}休整疗伤`,
-        description: `${char.name}寻得避风一隅，整理草药包并调理内息，神色略有缓和。`,
+        description: `${char.name}在${loc.name}休息并恢复体力。`,
         consequences: [`健康度回升至 ${char.health}`],
         stateChanges: [
           { characterId: char.id, field: 'health', oldValue: char.health - 10, newValue: char.health }
@@ -226,8 +234,8 @@ export class SimulationEngine {
         participantIds: [char.id],
         causeEventIds: [],
         title: `${char.name} 在${loc.name}捕捉到异样线索`,
-        description: `${char.name}在鬼市泥摊上辨认出一枚带血符文断木，悄然收入袖中。`,
-        consequences: [`获得隐蔽线索物品`],
+        description: `${char.name}在${loc.name}收集公开信息，整理与当前目标相关的线索。`,
+        consequences: ['记录一次当地信息收集经历'],
         stateChanges: [],
         visibility: {
           isPublic: false,
@@ -252,8 +260,8 @@ export class SimulationEngine {
           locationId: targetLocId,
           participantIds: [char.id],
           causeEventIds: [],
-          title: `${char.name} 冒雨移步前往 ${targetLoc.name}`,
-          description: `${char.name}因心系线索，披戴蓑笠离开${loc.name}，循暗道抵至${targetLoc.name}。`,
+          title: `${char.name} 前往 ${targetLoc.name}`,
+          description: `${char.name}离开${loc.name}，沿已知路线前往${targetLoc.name}。`,
           consequences: [`位置变更至 ${targetLoc.name}`],
           stateChanges: [
             { characterId: char.id, field: 'currentLocationId', oldValue: oldLocId, newValue: targetLocId }

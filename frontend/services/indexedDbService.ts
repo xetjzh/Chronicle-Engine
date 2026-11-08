@@ -102,6 +102,15 @@ export class IndexedDbService {
     }
   }
 
+  public static async listProjectData(): Promise<ProjectData[]> {
+    const db = await this.getDB();
+    const request = db.transaction(STORE_PROJECT, 'readonly').objectStore(STORE_PROJECT).getAll();
+    return new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error || new Error('无法读取作品列表。'));
+    });
+  }
+
   /**
    * Retrieves a chapter-number window from one saved project. The project ID is
    * explicit so legacy chapter-store entries cannot leak across projects.

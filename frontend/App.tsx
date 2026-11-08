@@ -1,7 +1,8 @@
 import React, { lazy, Suspense, useState, useEffect, useRef, useCallback } from 'react';
-import { ProjectData, WorldEvent, ConsistencyIssue, LorebookEntry } from './types';
+import { ProjectData, WorldEvent, ConsistencyIssue, LorebookEntry, CreationMode } from './types';
 import { storageService } from './services/storageService';
-import { initialProject } from './services/demoWorld';
+import { createEmptyProject } from './services/projectFactory';
+import { ProjectLibraryModal } from './components/ProjectLibraryModal';
 import { AuthorDeskEditor } from './components/AuthorDeskEditor';
 import { Dialog } from './components/Dialog';
 import { parseProjectBackup } from './services/backupValidation';
@@ -29,10 +30,15 @@ function LoadingPanel() {
 }
 
 export default function App() {
-  const [project, setProject] = useState<ProjectData>(() => structuredClone(initialProject));
+  const [project, setProject] = useState<ProjectData>(() => createEmptyProject('proj_first_book'));
   const [currentTab, setCurrentTab] = useState<'SIMULATION' | 'NOVEL' | 'AUTHOR_DESK' | 'CHARACTERS' | 'WORLD' | 'LOREBOOK' | 'READER'>('AUTHOR_DESK');
   const [selectedEventForChapter, setSelectedEventForChapter] = useState<WorldEvent[]>([]);
   const [showAboutModal, setShowAboutModal] = useState(false);
+  const [showBookLibrary, setShowBookLibrary] = useState(false);
+  const [isProjectChanging, setIsProjectChanging] = useState(false);
+  const [pipelineMode, setPipelineMode] = useState<'AUTO_NOVEL' | 'CO_WRITING'>('CO_WRITING');
+  const projectTransition = useRef(false);
+  const auditRun = useRef(0);
   const [showAISettings, setShowAISettings] = useState(false);
   const [showDocLibrary, setShowDocLibrary] = useState(false);
   const [showAnalyticsModal, setShowAnalyticsModal] = useState(false);
@@ -73,6 +79,7 @@ export default function App() {
   }, [restoreAttempt]);
 
   const handleUpdateProject = useCallback((p: ProjectData) => {
+    if (projectTransition.current || p.id !== latestProject.current.id) return;
     latestProject.current = p;
     needsSave.current = true;
     saveRevision.current += 1;
@@ -81,9 +88,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (isRestoring || restoreError || !needsSave.current) return;
+    if (isRestoring || isProjectChanging || restoreError || !needsSave.current) return;
     const revision = saveRevision.current;
     const timer = window.setTimeout(() => {
+      if (projectTransition.current || revision !== saveRevision.current || project.id !== latestProject.current.id) return;
       storageService.saveProjectAsync(project).then(() => {
         if (revision !== saveRevision.current) return;
         needsSave.current = false;
@@ -95,10 +103,10 @@ export default function App() {
       });
     }, 350);
     return () => window.clearTimeout(timer);
-  }, [project, isRestoring, restoreError]);
+  }, [project, isRestoring, isProjectChanging, restoreError]);
 
   useEffect(() => {
-    const flush = () => { if (needsSave.current) storageService.saveProject(latestProject.current); };
+    const flush = () => { if (needsSave.current && !projectTransition.current) storageService.saveProject(latestProject.current); };
     window.addEventListener('pagehide', flush);
     return () => window.removeEventListener('pagehide', flush);
   }, []);
@@ -146,27 +154,63 @@ export default function App() {
     setAuditIssues([]);
     setShowAuditModal(true);
     setMobileNavOpen(false);
+    const run = ++auditRun.current;
+    const source = project;
     try {
       const { GeminiService } = await import('./services/geminiService');
-      const issues = await GeminiService.auditConsistency(project);
-      setAuditIssues(issues);
+      const issues = await GeminiService.auditConsistency(source);
+      if (auditRun.current === run && latestProject.current.id === source.id) setAuditIssues(issues);
     } catch (error) {
-      setAuditError(error instanceof Error ? error.message : '审计暂时无法完成，请检查模型设置后重试。');
+      if (auditRun.current === run) setAuditError(error instanceof Error ? error.message : '审计暂时无法完成，请检查模型设置后重试。');
     } finally {
-      setIsAuditing(false);
+      if (auditRun.current === run) setIsAuditing(false);
     }
+  };
+
+  const openWorkflow = (mode: CreationMode) => {
+    if (mode === 'SIMULATION') setCurrentTab('SIMULATION');
+    else { setPipelineMode(mode); setCurrentTab('NOVEL'); }
+    setMobileNavOpen(false);
+  };
+
+  const handleActivateProject = async (next: ProjectData, mode?: CreationMode) => {
+    if (projectTransition.current) throw new Error('正在切换作品，请稍后重试。');
+    const parsed = parseProjectBackup(JSON.stringify(next));
+    projectTransition.current = true;
+    setIsProjectChanging(true);
+    saveRevision.current += 1;
+    try {
+      await storageService.activateProjectAsync(latestProject.current, parsed);
+      latestProject.current = parsed;
+      needsSave.current = false;
+      setProject(parsed); setSaveState('saved'); setRestoreError('');
+      setSelectedEventForChapter([]); setShowBookLibrary(false);
+      setShowAISettings(false); setShowDocLibrary(false); setShowChaosModal(false); setShowAnalyticsModal(false);
+      auditRun.current += 1; setIsAuditing(false); setShowAuditModal(false); setAuditIssues([]);
+      if (mode === 'AUTO_NOVEL' || mode === 'SIMULATION') openWorkflow(mode);
+      else { setCurrentTab('AUTHOR_DESK'); setPipelineMode('CO_WRITING'); }
+      setNotice({ message: `已打开「${parsed.title}」，各作品独立保存。` });
+    } catch (failure) {
+      setSaveState('error');
+      throw failure;
+    } finally { projectTransition.current = false; setIsProjectChanging(false); }
   };
 
   const handleImportBackup = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
+    const sourceId = latestProject.current.id;
     try {
       const parsed = parseProjectBackup(await file.text());
+      if (latestProject.current.id !== sourceId) throw new Error('作品已切换，请重新选择需要还原的备份。');
+      // Importing a different book must not overwrite another library record
+      // merely because the file carries that book's original ID.
+      const restored = parsed.id === sourceId ? parsed : { ...parsed, id: `proj_${crypto.randomUUID()}` };
       setRestoreError('');
-      handleUpdateProject(parsed);
+      await handleActivateProject(restored);
       setSelectedEventForChapter([]);
-      setNotice({ message: `已还原「${parsed.title}」，共 ${parsed.chapters.length} 个章节。` });
+      setNotice({ message: `已${parsed.id === sourceId ? '还原当前作品' : '导入独立副本'}「${parsed.title}」，共 ${parsed.chapters.length} 个章节。` });
     } catch (error) {
       setNotice({ message: error instanceof Error ? error.message : '无法读取备份文件。', error: true });
     }
@@ -239,6 +283,7 @@ export default function App() {
           </div>
           <p className="mt-2 truncate font-serif text-sm text-stone-100">{project.title}</p>
           <p className="mt-1 truncate text-[11px] text-stone-500">{project.worldName}</p>
+          <div className="mt-3 flex gap-2"><button aria-label="新建作品" disabled={isRestoring || isProjectChanging || !!restoreError} onClick={() => { setShowBookLibrary(true); setMobileNavOpen(false); }} className="rounded-lg border border-amber-200/25 px-2 py-2 text-xs text-amber-100 disabled:opacity-40">＋ 新建作品</button><button aria-label="打开作品书架" disabled={isRestoring || isProjectChanging || !!restoreError} onClick={() => { setShowBookLibrary(true); setMobileNavOpen(false); }} className="rounded-lg border border-white/10 px-2 py-2 text-xs">作品书架</button></div>
         </div>
 
         <nav className="sidebar-navigation" aria-label="主导航">
@@ -368,8 +413,9 @@ export default function App() {
             </div>
           </section>
 
-        <div className={`workspace-module module-${currentTab.toLowerCase()}`}>
-        {isRestoring ? <LoadingPanel /> : restoreError ? <div className="workspace-loading flex-col px-8 text-center" role="alert"><AlertCircle className="h-7 w-7" /><h3 className="font-serif text-lg text-slate-100">继续之前，先恢复完整作品</h3><p className="max-w-md text-xs leading-7 text-slate-400">{restoreError}</p><button className="rounded-lg border border-purple-700 bg-purple-600 px-5 py-2 text-xs text-white" onClick={() => setRestoreAttempt(attempt => attempt + 1)}>重新读取存档</button><button className="text-xs underline underline-offset-4" onClick={() => importRef.current?.click()}>从备份还原</button></div> : <Suspense fallback={<LoadingPanel />}>
+        <div aria-label="创作方式" className="mb-4 flex flex-wrap gap-2 text-xs">{([['AUTO_NOVEL', '模式 A · 自动成书'], ['CO_WRITING', '模式 B · 人机共写'], ['SIMULATION', '模式 C · 世界模拟']] as const).map(([mode, label]) => <button key={mode} disabled={isRestoring || isProjectChanging || !!restoreError} onClick={() => openWorkflow(mode)} aria-pressed={mode === 'SIMULATION' ? currentTab === 'SIMULATION' : currentTab === 'NOVEL' && pipelineMode === mode} className="rounded-lg border border-white/15 bg-slate-900 px-3 py-2 text-slate-200 aria-pressed:border-purple-500 aria-pressed:text-purple-200 disabled:opacity-40">{label}</button>)}</div>
+        <div key={project.id} className={`workspace-module module-${currentTab.toLowerCase()}`}>
+        {isRestoring || isProjectChanging ? <LoadingPanel /> : restoreError ? <div className="workspace-loading flex-col px-8 text-center" role="alert"><AlertCircle className="h-7 w-7" /><h3 className="font-serif text-lg text-slate-100">继续之前，先恢复完整作品</h3><p className="max-w-md text-xs leading-7 text-slate-400">{restoreError}</p><button className="rounded-lg border border-purple-700 bg-purple-600 px-5 py-2 text-xs text-white" onClick={() => setRestoreAttempt(attempt => attempt + 1)}>重新读取存档</button><button className="text-xs underline underline-offset-4" onClick={() => importRef.current?.click()}>从备份还原</button></div> : <Suspense fallback={<LoadingPanel />}>
         {currentTab === 'AUTHOR_DESK' && (
           <AuthorDeskEditor
             key={project.id}
@@ -381,7 +427,10 @@ export default function App() {
 
         {currentTab === 'NOVEL' && (
           <NovelEditor
+            key={`${project.id}:${pipelineMode}`}
             project={project}
+            pipelineMode={pipelineMode}
+            onPipelineModeChange={setPipelineMode}
             onUpdateProject={handleUpdateProject}
             selectedEventForChapter={selectedEventForChapter}
             onOpenAISettings={() => setShowAISettings(true)}
@@ -429,6 +478,7 @@ export default function App() {
       </div>
 
       <Suspense fallback={<div className="dialog-loading" role="status"><RefreshCw className="h-5 w-5 animate-spin" />正在打开工具…</div>}>
+      {showBookLibrary && <ProjectLibraryModal project={project} onActivate={handleActivateProject} onClose={() => setShowBookLibrary(false)} />}
       {/* Reference Material & Document Library Modal */}
       {showDocLibrary && (
         <DocumentLibraryModal

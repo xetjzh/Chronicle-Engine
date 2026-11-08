@@ -11,9 +11,11 @@ const project = (id, chapters = []) => ({ id, title: id, worldName: id, chapters
 
 // Only the browser storage boundary is simulated; every service method under test
 // is loaded from the real TypeScript implementation without generating files.
-function services({ projects = [], chapters = [], localProject, failWrites = false, failLocal = false, failOpen = false } = {}) {
+function services({ projects = [], chapters = [], localProject, failWrites = false, failLocal = false, failOpen = false, deferWrites = false, failAtWrite } = {}) {
   const records = { projects: new Map(projects.map(p => [p.id, structuredClone(p)])), chapters: new Map(chapters.map(c => [c.id, structuredClone(c)])), settings: new Map() };
   const local = new Map(localProject ? [[storageKey, JSON.stringify(localProject)]] : []);
+  const pendingWrites = [];
+  let writeCount = 0;
   const indexedDB = {
     open() {
       const request = {};
@@ -25,20 +27,24 @@ function services({ projects = [], chapters = [], localProject, failWrites = fal
         }
         request.result = {
           transaction(names, mode) {
+            const writeFails = mode === 'readwrite' && (failWrites || ++writeCount === failAtWrite);
             const tx = {};
             tx.objectStore = name => ({
-              put(value) { if (!failWrites) records[name].set(value.id, structuredClone(value)); },
+              put(value) { if (!writeFails) records[name].set(value.id, structuredClone(value)); },
               get(id) { return read(() => records[name].get(id)); },
               getAll() { return read(() => [...records[name].values()]); },
               index() { return { getAll: range => read(() => [...records[name].values()].filter(c => c.chapterNumber >= range.lower && c.chapterNumber <= range.upper)) }; },
             });
-            if (mode === 'readwrite') queueMicrotask(() => {
-              if (failWrites) {
+            if (mode === 'readwrite') {
+              const finish = () => {
+              if (writeFails) {
                 tx.error = new Error('Disk quota exceeded');
                 tx.onerror?.();
                 tx.onabort?.();
               } else tx.oncomplete?.();
-            });
+              };
+              if (deferWrites) pendingWrites.push(finish); else queueMicrotask(finish);
+            }
             return tx;
           },
         };
@@ -81,7 +87,7 @@ function services({ projects = [], chapters = [], localProject, failWrites = fal
     evaluate(specifier => load(`${specifier}.ts`), module, module.exports);
     return module.exports;
   }
-  return { ...load('indexedDbService.ts'), ...load('storageService.ts'), records, local, downloads, blobs, revoked, timers };
+  return { ...load('indexedDbService.ts'), ...load('storageService.ts'), records, local, downloads, blobs, revoked, timers, pendingWrites };
 }
 
 test('reloading a saved project does not resurrect chapters removed by a backup restore', async () => {
@@ -90,6 +96,60 @@ test('reloading a saved project does not resurrect chapters removed by a backup 
   await IndexedDbService.saveProjectData(project('a', [chapter('kept')]));
   const loaded = await IndexedDbService.loadProjectData('a');
   assert.deepEqual(Array.from(loaded.chapters, c => c.id), ['kept']);
+});
+
+test('fresh startup opens an empty book rather than a sample manuscript', async () => {
+  const { storageService } = services();
+  const blank = await storageService.loadProjectAsync();
+  assert.equal(blank.chapters.length, 0);
+  assert.equal(blank.characters.length, 0);
+  assert.equal(blank.events.length, 0);
+});
+
+test('activating a new book preserves both manuscripts and supports switching back after reload', async () => {
+  const { storageService, records } = services();
+  const old = project('old-book', [chapter('original')]);
+  const next = project('new-book', []);
+  await storageService.activateProjectAsync(old, next);
+  assert.equal((await storageService.loadProjectAsync()).id, 'new-book');
+  assert.equal(records.projects.get('old-book').chapters[0].id, 'original');
+  assert.deepEqual(Array.from(await storageService.listProjectsAsync(), book => book.id).sort(), ['new-book', 'old-book']);
+  const loaded = await storageService.loadSavedProjectAsync('old-book');
+  await storageService.activateProjectAsync(next, loaded);
+  assert.equal((await storageService.loadProjectAsync()).chapters[0].id, 'original');
+  assert.equal(records.projects.get('new-book').chapters.length, 0);
+});
+
+test('failed durable storage cannot replace the current book with a new one', async () => {
+  const old = project('old-book', [chapter('original')]);
+  const { storageService, local, records } = services({ localProject: old, failWrites: true });
+  await assert.rejects(storageService.activateProjectAsync(old, project('new-book')), /quota|存储|保存|write/i);
+  assert.equal(JSON.parse(local.get(storageKey)).id, 'old-book');
+  assert.equal(records.projects.has('new-book'), false);
+});
+
+test('pagehide saving retains latest text synchronously even while a previous IndexedDB save is pending', async () => {
+  const { storageService, local, pendingWrites } = services({ deferWrites: true });
+  const first = storageService.saveProjectAsync(project('book', [chapter('old')]));
+  await new Promise(resolve => setImmediate(resolve));
+  storageService.saveProject(project('book', [chapter('latest-typing')]));
+  assert.equal(JSON.parse(local.get(storageKey)).chapters[0].id, 'latest-typing');
+  pendingWrites.shift()(); await first;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(JSON.parse(local.get(storageKey)).chapters[0].id, 'latest-typing');
+  pendingWrites.shift()();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await storageService.loadProjectAsync()).chapters[0].id, 'latest-typing');
+});
+
+test('failure saving the new book retains the full old manuscript and a failed queue operation does not poison later saves', async () => {
+  const old = project('old', Array.from({ length: 20 }, (_, index) => chapter(`c-${index}`, index + 1)));
+  const { storageService, records } = services({ failAtWrite: 2 });
+  await assert.rejects(storageService.activateProjectAsync(old, project('new')), /quota/);
+  assert.equal((await storageService.loadProjectAsync()).chapters.length, 20);
+  assert.equal(records.projects.has('new'), false);
+  await storageService.saveProjectAsync({ ...old, title: '可继续保存' });
+  assert.equal((await storageService.loadProjectAsync()).title, '可继续保存');
 });
 
 test('project loading preserves its chapter membership and saved order', async () => {
