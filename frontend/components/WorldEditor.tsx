@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ProjectData, WorldRule, LocationNode, Faction, ForeshadowingClue } from '../types';
-import { 
-  Compass, MapPin, Flag, HelpCircle, Plus, Trash2, Edit3, 
+import {
+  Compass, MapPin, Flag, HelpCircle, Plus, Trash2, Edit3,
   Sparkles, CheckCircle, Shield, AlertCircle
 } from 'lucide-react';
 
@@ -15,6 +15,11 @@ export const WorldEditor: React.FC<WorldEditorProps> = ({
   onUpdateProject,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<'RULES' | 'LOCATIONS' | 'FACTIONS' | 'FORESHADOWING'>('RULES');
+  const [notice, setNotice] = useState('');
+  const [editingFaction, setEditingFaction] = useState('');
+  const [factionName, setFactionName] = useState('');
+  const [factionIdeology, setFactionIdeology] = useState('');
+  const [factionPower, setFactionPower] = useState(50);
 
   // Rule creation states
   const [newRuleCategory, setNewRuleCategory] = useState<'natural' | 'magic' | 'social' | 'taboo'>('natural');
@@ -35,7 +40,7 @@ export const WorldEditor: React.FC<WorldEditorProps> = ({
   const handleAddRule = () => {
     if (!newRuleText.trim()) return;
     const rule: WorldRule = {
-      id: `rule_${Date.now()}`,
+      id: `rule_${crypto.randomUUID()}`,
       category: newRuleCategory,
       rule: newRuleText,
       consequenceOfViolation: newRuleConsequence || '触犯世界法则，承受物理或社会秩序制裁',
@@ -54,12 +59,12 @@ export const WorldEditor: React.FC<WorldEditorProps> = ({
   const handleAddLocation = () => {
     if (!newLocName.trim()) return;
     const loc: LocationNode = {
-      id: `loc_${Date.now()}`,
+      id: `loc_${crypto.randomUUID()}`,
       name: newLocName,
       type: newLocType,
-      description: newLocDesc || '北关未知据点',
+      description: newLocDesc.trim(),
       connectedLocationIds: project.locations[0] ? [project.locations[0].id] : [],
-      climateOrDanger: newLocClimate || '风雪严寒',
+      climateOrDanger: newLocClimate.trim(),
     };
     const updated = { ...project, locations: [...project.locations, loc] };
     onUpdateProject(updated);
@@ -69,14 +74,33 @@ export const WorldEditor: React.FC<WorldEditorProps> = ({
   };
 
   const handleDeleteLocation = (id: string) => {
-    const updated = { ...project, locations: project.locations.filter(l => l.id !== id) };
+    if (project.characters.some(c => c.currentLocationId === id) || project.events.some(e => e.locationId === id)
+      || project.snapshots.some(s => s.characters.some(c => c.currentLocationId === id))) {
+      setNotice('此地点仍被人物、历史事件或快照引用。请先迁移人物；保留历史所需的地点不能删除。'); return;
+    }
+    const updated = { ...project, locations: project.locations.filter(l => l.id !== id).map(l => ({ ...l, connectedLocationIds: l.connectedLocationIds.filter(target => target !== id) })) };
     onUpdateProject(updated);
+    setNotice('地点已删除，相关连接已移除。');
+  };
+
+  const saveFaction = () => {
+    if (!factionName.trim()) return;
+    const existing = project.factions.find(f => f.id === editingFaction);
+    const value: Faction = { ...(existing || { id: `fac_${crypto.randomUUID()}`, allies: [], enemies: [] }),
+      name: factionName.trim(), ideology: factionIdeology.trim(), powerLevel: Math.min(100, Math.max(0, factionPower)) };
+    onUpdateProject({ ...project, factions: existing ? project.factions.map(f => f.id === value.id ? value : f) : [...project.factions, value] });
+    setEditingFaction(''); setFactionName(''); setFactionIdeology(''); setFactionPower(50);
+  };
+  const deleteFaction = (id: string) => {
+    if (project.characters.some(c => c.factionId === id)) { setNotice('势力仍有人物归属，请先调整人物的所属势力。'); return; }
+    onUpdateProject({ ...project, factions: project.factions.filter(f => f.id !== id).map(f => ({ ...f, allies: f.allies.filter(x => x !== id), enemies: f.enemies.filter(x => x !== id) })) });
+    if (editingFaction === id) { setEditingFaction(''); setFactionName(''); setFactionIdeology(''); }
   };
 
   const handleAddForeshadowing = () => {
     if (!newClueTitle.trim()) return;
     const clue: ForeshadowingClue = {
-      id: `fore_${Date.now()}`,
+      id: `fore_${crypto.randomUUID()}`,
       title: newClueTitle,
       plantedTime: project.currentSimulationTime,
       relatedCharacterIds: project.characters.slice(0, 2).map(c => c.id),
@@ -92,7 +116,7 @@ export const WorldEditor: React.FC<WorldEditorProps> = ({
   };
 
   const handleToggleClueResolved = (id: string) => {
-    const updatedClues = project.foreshadowing.map(c => 
+    const updatedClues = project.foreshadowing.map(c =>
       c.id === id ? { ...c, isResolved: !c.isResolved } : c
     );
     const updated = { ...project, foreshadowing: updatedClues };
@@ -101,6 +125,7 @@ export const WorldEditor: React.FC<WorldEditorProps> = ({
 
   return (
     <div className="space-y-6">
+      {notice && <p role="status" className="rounded-lg border border-amber-800 p-3 text-xs text-amber-200">{notice}</p>}
       {/* Sub Tabs */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-3">
         <div className="flex items-center gap-2">
@@ -289,6 +314,7 @@ export const WorldEditor: React.FC<WorldEditorProps> = ({
                   </span>
                   <button
                     onClick={() => handleDeleteLocation(loc.id)}
+                    aria-label={`删除地点：${loc.name}`}
                     className="p-1 text-slate-500 hover:text-red-400 transition"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -376,6 +402,15 @@ export const WorldEditor: React.FC<WorldEditorProps> = ({
 
       {/* Factions SubTab */}
       {activeSubTab === 'FACTIONS' && (
+        <div className="space-y-4">
+        <section className="rounded-xl border border-slate-800 bg-slate-900 p-4 space-y-3 text-xs">
+          <h3>{editingFaction ? '编辑势力' : '新增势力'}</h3>
+          <label className="block">势力名称<input aria-label="势力名称" value={factionName} onChange={e => setFactionName(e.target.value)} className="block w-full bg-slate-800 p-2 rounded mt-1" /></label>
+          <label className="block">理念与背景<textarea aria-label="势力理念" value={factionIdeology} onChange={e => setFactionIdeology(e.target.value)} className="block w-full bg-slate-800 p-2 rounded mt-1" /></label>
+          <label className="block">势力值 (0–100)<input aria-label="势力值" type="number" min={0} max={100} value={factionPower} onChange={e => setFactionPower(Number(e.target.value) || 0)} className="block bg-slate-800 p-2 rounded mt-1" /></label>
+          <button disabled={!factionName.trim()} onClick={saveFaction} className="rounded bg-purple-700 px-3 py-2 disabled:opacity-40">保存势力</button>
+          {editingFaction && <button onClick={() => { setEditingFaction(''); setFactionName(''); setFactionIdeology(''); setFactionPower(50); }} className="ml-3">取消编辑势力</button>}
+        </section>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {project.factions.map(fac => (
             <div key={fac.id} className="p-4 bg-slate-900 border border-slate-800 rounded-xl text-xs space-y-3">
@@ -387,11 +422,13 @@ export const WorldEditor: React.FC<WorldEditorProps> = ({
                 <span className="text-purple-400 font-mono">势力值: {fac.powerLevel}</span>
               </div>
               <p className="text-slate-400 leading-relaxed">{fac.ideology}</p>
+              <div className="flex gap-3"><button aria-label={`编辑势力：${fac.name}`} onClick={() => { setEditingFaction(fac.id); setFactionName(fac.name); setFactionIdeology(fac.ideology); setFactionPower(fac.powerLevel); }}>编辑</button><button aria-label={`删除势力：${fac.name}`} onClick={() => deleteFaction(fac.id)} className="text-red-300">删除</button></div>
               <div className="pt-2 border-t border-slate-800 text-[11px] text-slate-500">
                 敌对势力：{fac.enemies.length > 0 ? fac.enemies.join(', ') : '无直接仇敌'}
               </div>
             </div>
           ))}
+        </div>
         </div>
       )}
     </div>

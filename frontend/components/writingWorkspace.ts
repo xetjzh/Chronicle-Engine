@@ -51,14 +51,27 @@ export function formatWritingParagraphs(content: string): string {
   return content.split(/\n+/).map(line => line.trim()).filter(Boolean).map(line => `　　${line}`).join('\n\n');
 }
 
+export function writingSettingsForDay(project: ProjectData, now: string = new Date().toISOString()): WritingDeskSettings {
+  const settings = { ...defaultWritingSettings, ...project.deskSettings };
+  const date = new Date(now);
+  if (!Number.isFinite(date.getTime())) return settings;
+  const day = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  return settings.lastWritingDate === day ? settings : { ...settings, lastWritingDate: day, currentSessionWords: 0 };
+}
+
+export function invalidateChapterAnalysis(chapter: Chapter): Chapter {
+  const { extraction, tensionScore, actBeats, ...rest } = chapter;
+  return { ...rest, status: 'draft' };
+}
+
 export function updateWritingContent(project: ProjectData, chapterId: string, content: string, now: string): ProjectData {
   const chapter = project.chapters.find(item => item.id === chapterId);
   if (!chapter) return project;
-  const settings = { ...defaultWritingSettings, ...project.deskSettings };
+  const settings = writingSettingsForDay(project, now);
   return {
     ...project,
     chapters: project.chapters.map(item => item.id === chapterId
-      ? { ...item, content, wordCount: content.length, updatedAt: now }
+      ? { ...(item.content === content ? item : invalidateChapterAnalysis(item)), content, wordCount: content.length, updatedAt: now }
       : item),
     deskSettings: {
       ...settings,

@@ -3,8 +3,9 @@ import type { ProjectData, WritingDeskSettings } from '../types';
 import { soundEffects } from '../services/soundEffects';
 import { AIProviderService } from '../services/aiProviderService';
 import { Dialog } from './Dialog';
+import { PdfDocumentViewer } from './PdfDocumentViewer';
 import { AlignLeft, BookOpen, Check, ChevronRight, Feather, List, Maximize2, Minimize2, Palette, Plus, RefreshCw, Sparkles, SplitSquareVertical, Target, Trash2, Volume2, VolumeX, Wand2, X } from 'lucide-react';
-import { applyWritingAssistantResult, createWritingChapter, defaultWritingSettings, deleteWritingChapter, formatWritingParagraphs, updateWritingContent, updateWritingPreferences } from './writingWorkspace';
+import { applyWritingAssistantResult, createWritingChapter, defaultWritingSettings, deleteWritingChapter, formatWritingParagraphs, updateWritingContent, updateWritingPreferences, writingSettingsForDay } from './writingWorkspace';
 
 interface AuthorDeskEditorProps {
   project: ProjectData;
@@ -26,6 +27,7 @@ export const AuthorDeskEditor: React.FC<AuthorDeskEditorProps> = ({ project, onU
   const [showThemePicker, setShowThemePicker] = useState(false);
   const [isSplitReferenceOpen, setIsSplitReferenceOpen] = useState(false);
   const [referenceId, setReferenceId] = useState(project.referenceDocs?.[0]?.id || '');
+  const [referenceChapter, setReferenceChapter] = useState(0);
   const [saveStatus, setSaveStatus] = useState('编辑内容将自动保存');
   const [isAIAssisting, setIsAIAssisting] = useState(false);
   const [assistantNotice, setAssistantNotice] = useState('');
@@ -39,7 +41,7 @@ export const AuthorDeskEditor: React.FC<AuthorDeskEditorProps> = ({ project, onU
   latestProject.current = project;
   latestCallback.current = onUpdateProject;
 
-  const deskSettings = { ...defaultWritingSettings, ...project.deskSettings };
+  const deskSettings = writingSettingsForDay(project);
   const currentChapter = project.chapters.find(chapter => chapter.id === activeChapterId) || project.chapters[0];
   const currentChapterId = useRef(currentChapter?.id);
   currentChapterId.current = currentChapter?.id;
@@ -160,8 +162,8 @@ export const AuthorDeskEditor: React.FC<AuthorDeskEditorProps> = ({ project, onU
     }
     const request = {
       projectId: source.id, chapterId: chapter.id, sourceContent: chapter.content,
-      replaceStart: operation === 'expand' && !hasSelection ? chapter.content.length : start,
-      replaceEnd: operation === 'expand' && !hasSelection ? chapter.content.length : end,
+      replaceStart: operation === 'expand' ? end : start,
+      replaceEnd: end,
     };
     const active = { projectId: source.id, chapterId: chapter.id, controller: new AbortController() };
     activeAIRequest.current = active;
@@ -179,7 +181,7 @@ export const AuthorDeskEditor: React.FC<AuthorDeskEditorProps> = ({ project, onU
       });
       if (!mounted.current || activeAIRequest.current !== active || active.controller.signal.aborted) return;
       if (!generated?.trim()) { setAssistantNotice('本次没有生成文字，请稍后重试。'); return; }
-      const text = operation === 'expand' && !hasSelection ? `\n\n${generated.trim()}` : generated.trim();
+      const text = operation === 'expand' ? `\n\n${generated.trim()}` : generated.trim();
       const result = applyWritingAssistantResult(latestProject.current, request, text, new Date().toISOString());
       if (!result.applied || currentChapterId.current !== request.chapterId) {
         setPendingAIText(generated.trim());
@@ -249,7 +251,7 @@ export const AuthorDeskEditor: React.FC<AuthorDeskEditorProps> = ({ project, onU
           </div> : <div className="desk-empty flex min-h-[540px] flex-col items-center justify-center px-6 text-center"><span className="mb-6 grid h-16 w-16 place-items-center rounded-2xl border border-[var(--desk-border)] text-[var(--desk-accent)]"><Feather className="h-7 w-7" /></span><h3 className="font-serif text-2xl">每个故事，都有第一行</h3><p className="mt-3 max-w-xs text-xs leading-6 text-[var(--desk-muted)]">新建第一章，记下脑海里的人物、场景，或一个尚未成形的念头。</p><button onClick={handleCreateChapter} className="mt-6 inline-flex min-h-10 items-center gap-2 rounded-lg bg-[var(--desk-accent)] px-5 text-xs font-semibold text-[var(--desk-bg)]"><Plus className="h-4 w-4" />创建第一章</button></div>}
         </div>
 
-        {isSplitReferenceOpen && <aside aria-label="对照素材" className="desk-reference flex max-h-[450px] min-w-0 shrink-0 flex-col border-t border-[var(--desk-border)] bg-[var(--desk-surface)] text-xs xl:max-h-none xl:w-72 xl:border-l xl:border-t-0 2xl:w-80"><div className="flex items-center justify-between border-b border-[var(--desk-border)] p-4"><h4 className="flex items-center gap-2 font-semibold"><BookOpen className={iconClass} />对照素材</h4><button onClick={() => setIsSplitReferenceOpen(false)} className="rounded p-1" aria-label="关闭对照素材"><X className={iconClass} /></button></div><label className="p-3"><span className="sr-only">参考文献</span><select value={reference?.id || ''} onChange={event => setReferenceId(event.target.value)} className="w-full rounded-lg border border-[var(--desk-border)] bg-[var(--desk-bg)] p-2 text-inherit">{!reference && <option value="">暂无参考文献</option>}{(project.referenceDocs || []).map(doc => <option key={doc.id} value={doc.id}>{doc.title} ({doc.format.toUpperCase()})</option>)}</select></label><div className="flex-1 overflow-y-auto whitespace-pre-line p-4 font-serif text-[13px] leading-7">{reference?.parsedChapters?.[0]?.content || '在文献库导入资料，即可边阅读、边创作。'}</div>{!reference && <button onClick={onOpenDocumentLibrary} className="m-4 rounded-lg border border-[var(--desk-border)] p-2 text-[var(--desk-accent)]">打开文献库</button>}</aside>}
+        {isSplitReferenceOpen && <aside aria-label="对照素材" className="desk-reference flex max-h-[450px] min-w-0 shrink-0 flex-col border-t border-[var(--desk-border)] bg-[var(--desk-surface)] text-xs xl:max-h-none xl:w-72 xl:border-l xl:border-t-0 2xl:w-80"><div className="flex items-center justify-between border-b border-[var(--desk-border)] p-4"><h4 className="flex items-center gap-2 font-semibold"><BookOpen className={iconClass} />对照素材</h4><button onClick={() => setIsSplitReferenceOpen(false)} className="rounded p-1" aria-label="关闭对照素材"><X className={iconClass} /></button></div><label className="p-3"><span className="sr-only">参考文献</span><select value={reference?.id || ''} onChange={event => { setReferenceId(event.target.value); setReferenceChapter(0); }} className="w-full rounded-lg border border-[var(--desk-border)] bg-[var(--desk-bg)] p-2 text-inherit">{!reference && <option value="">暂无参考文献</option>}{(project.referenceDocs || []).map(doc => <option key={doc.id} value={doc.id}>{doc.title} ({doc.format.toUpperCase()})</option>)}</select></label>{reference?.format === 'pdf' ? <PdfDocumentViewer document={reference} onRelink={doc => { const current = latestProject.current; if (current.id !== project.id) return; commitProject({ ...current, referenceDocs: current.referenceDocs.map(d => d.id === doc.id ? doc : d) }); }} /> : <><label className="px-3">章节<select aria-label="对照资料章节" value={String(Math.min(referenceChapter, Math.max(0, (reference?.parsedChapters.length || 1) - 1)))} onChange={event => setReferenceChapter(Number(event.target.value))} className="mt-1 block w-full bg-[var(--desk-bg)] p-2 rounded">{reference?.parsedChapters.map((ch, index) => <option key={ch.id} value={index}>{ch.title}</option>)}</select></label><div className="flex-1 overflow-y-auto whitespace-pre-line p-4 font-serif text-[13px] leading-7">{reference?.parsedChapters?.[referenceChapter]?.content || reference?.parsedChapters?.[0]?.content || '在文献库导入资料，即可边阅读、边创作。'}</div></>}{!reference && <button onClick={onOpenDocumentLibrary} className="m-4 rounded-lg border border-[var(--desk-border)] p-2 text-[var(--desk-accent)]">打开文献库</button>}</aside>}
       </div>
 
       <footer className="desk-statusbar flex flex-wrap items-center justify-between gap-3 border-t border-[var(--desk-border)] bg-[var(--desk-surface)] px-4 py-3 text-[10px] sm:px-5"><span className="text-[var(--desk-muted)]">本章 <strong className="font-mono font-medium text-[var(--desk-text)]">{(currentChapter?.wordCount || 0).toLocaleString()}</strong> 字<span className="mx-3 opacity-30">|</span>全书 <strong className="font-mono font-medium text-[var(--desk-text)]">{totalWords.toLocaleString()}</strong> 字</span><div className="flex items-center gap-3"><span className="hidden text-[var(--desk-muted)] sm:inline">{deskSettings.isZenMode ? 'Esc 退出专注' : '安心写作，随时停笔'}</span><div className="flex items-center gap-1 rounded-lg border border-[var(--desk-border)] p-0.5"><button onClick={() => changePreferences({ fontSize: Math.max(14, deskSettings.fontSize - 1) })} disabled={deskSettings.fontSize <= 14} className="min-h-7 min-w-7 rounded px-1.5 hover:bg-black/10 disabled:opacity-40" aria-label="缩小正文字号">A−</button><span className="px-1 font-mono">{deskSettings.fontSize}</span><button onClick={() => changePreferences({ fontSize: Math.min(28, deskSettings.fontSize + 1) })} disabled={deskSettings.fontSize >= 28} className="min-h-7 min-w-7 rounded px-1.5 hover:bg-black/10 disabled:opacity-40" aria-label="放大正文字号">A+</button></div></div></footer>

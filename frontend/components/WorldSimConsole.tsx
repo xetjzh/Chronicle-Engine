@@ -2,8 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { ProjectData, WorldEvent, Character, LocationNode } from '../types';
 import { SimulationEngine } from '../services/simulationEngine';
 import { storageService } from '../services/storageService';
-import { 
-  Clock, Play, Pause, FastForward, RotateCcw, GitBranch, 
+import {
+  Clock, Play, Pause, FastForward, RotateCcw, GitBranch,
   MapPin, ShieldAlert, Sparkles, User, AlertCircle, BookmarkPlus, Eye,
   Activity, RefreshCw
 } from 'lucide-react';
@@ -84,12 +84,13 @@ export const WorldSimConsole: React.FC<WorldSimConsoleProps> = ({
       latestProject.current = updated;
       latestCallback.current(updated);
       setSelectedEvent(updated.events[updated.events.length - 1] || null);
-      showToast('世界状态已精准回滚！');
+      const legacy = !latestProject.current.snapshots.find(s => s.id === snapId)?.worldState;
+      showToast(legacy ? '旧快照已恢复人物与时间；旧格式不含地点等设定，请检查未分配位置和关联。' : '已恢复快照的世界与事件；现有稿件保留，失效关联已清理。');
     }
   };
 
-  const filteredEvents = selectedLocationId === 'all' 
-    ? [...project.events].reverse() 
+  const filteredEvents = selectedLocationId === 'all'
+    ? [...project.events].reverse()
     : [...project.events].filter(e => e.locationId === selectedLocationId).reverse();
 
   return (
@@ -217,8 +218,8 @@ export const WorldSimConsole: React.FC<WorldSimConsoleProps> = ({
                     key={loc.id}
                     onClick={() => setSelectedLocationId(loc.id)}
                     className={`p-3 rounded-lg border text-xs cursor-pointer transition ${
-                      selectedLocationId === loc.id 
-                        ? 'bg-purple-950/40 border-purple-500/80 text-white' 
+                      selectedLocationId === loc.id
+                        ? 'bg-purple-950/40 border-purple-500/80 text-white'
                         : 'bg-slate-800/50 border-slate-800 text-slate-300 hover:border-slate-700'
                     }`}
                   >
@@ -309,8 +310,8 @@ export const WorldSimConsole: React.FC<WorldSimConsoleProps> = ({
                   onClick={() => setSelectedEvent(evt)}
                   aria-pressed={isSelected}
                   className={`block w-full text-left p-3.5 rounded-xl border cursor-pointer transition text-xs relative ${
-                    isSelected 
-                      ? 'bg-purple-950/30 border-purple-500 shadow-md' 
+                    isSelected
+                      ? 'bg-purple-950/30 border-purple-500 shadow-md'
                       : 'bg-slate-900 border-slate-800 hover:border-slate-700'
                   }`}
                 >

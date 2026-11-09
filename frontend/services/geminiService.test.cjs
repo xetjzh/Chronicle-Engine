@@ -137,6 +137,8 @@ test('a completed audit can report no issues when the model explicitly confirms 
 test('deterministic audit findings remain visible after a successful AI audit', async () => {
   const { GeminiService, project } = service(async () => 'ALL_CONSISTENT');
   project.characters[0].isAlive = false;
+  project.characters[0].diedAtTimeStep = 0;
+  project.events = project.events.map(event => ({ ...event, timeStepIndex: 1 }));
   const issues = await GeminiService.auditConsistency(project);
   assert.equal(issues.some(issue => issue.title === '已故角色仍然产生事件'), true);
   assert.equal(issues.some(issue => issue.id === 'iss_ok'), false);

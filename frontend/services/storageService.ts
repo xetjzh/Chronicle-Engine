@@ -154,12 +154,14 @@ export const storageService = {
 
   createSnapshot(project: ProjectData, name: string, description: string): ProjectData {
     const snapshot: WorldSnapshot = {
-      id: `snap_${Date.now()}`,
+      id: `snap_${crypto.randomUUID()}`,
       snapshotName: name || `时间节点 #${project.timeStepIndex}`,
       simulationTime: project.currentSimulationTime,
       timeStepIndex: project.timeStepIndex,
       createdAt: new Date().toLocaleString(),
       characters: JSON.parse(JSON.stringify(project.characters)),
+      events: JSON.parse(JSON.stringify(project.events)),
+      worldState: JSON.parse(JSON.stringify({ worldName: project.worldName, locations: project.locations, factions: project.factions, rules: project.rules, foreshadowing: project.foreshadowing })),
       eventsCount: project.events.length,
       description: description || '自动保存的历史状态快照'
     };
@@ -176,13 +178,35 @@ export const storageService = {
     if (!snap) return project;
 
     const rolledBackCharacters = JSON.parse(JSON.stringify(snap.characters));
-    const rolledBackEvents = project.events.filter(e => e.timeStepIndex <= snap.timeStepIndex);
+    const rolledBackEvents = JSON.parse(JSON.stringify(snap.events || project.events.filter(e => e.timeStepIndex <= snap.timeStepIndex))) as ProjectData['events'];
+    const world = snap.worldState ? JSON.parse(JSON.stringify(snap.worldState)) as NonNullable<WorldSnapshot['worldState']> : {
+      worldName: project.worldName, locations: project.locations, factions: project.factions, rules: project.rules, foreshadowing: project.foreshadowing,
+    };
+    const locationIds = new Set(world.locations.map(l => l.id)), factionIds = new Set(world.factions.map(f => f.id));
+    const characterIds = new Set<string>(rolledBackCharacters.map((c: ProjectData['characters'][number]) => c.id));
+    const eventIds = new Set(rolledBackEvents.map(e => e.id));
+    for (const c of rolledBackCharacters) {
+      if (!locationIds.has(c.currentLocationId)) c.currentLocationId = '';
+      if (!factionIds.has(c.factionId)) c.factionId = '';
+      c.relationships = Object.fromEntries(Object.entries(c.relationships).filter(([id]) => characterIds.has(id)));
+      c.knownFacts = c.knownFacts.map((fact: ProjectData['characters'][number]['knownFacts'][number]) => ({ ...fact, sourceEventId: fact.sourceEventId && eventIds.has(fact.sourceEventId) ? fact.sourceEventId : undefined }));
+    }
+    for (const event of rolledBackEvents) {
+      if (!locationIds.has(event.locationId)) event.locationId = '';
+      event.participantIds = event.participantIds.filter(id => characterIds.has(id));
+      event.visibility.knownByCharacterIds = event.visibility.knownByCharacterIds.filter(id => characterIds.has(id));
+      event.causeEventIds = event.causeEventIds.filter(id => eventIds.has(id));
+      event.stateChanges = event.stateChanges.filter(change => characterIds.has(change.characterId));
+    }
 
     const updated: ProjectData = {
       ...project,
       currentSimulationTime: snap.simulationTime,
       timeStepIndex: snap.timeStepIndex,
+      ...world,
+      foreshadowing: world.foreshadowing.map(clue => ({ ...clue, relatedCharacterIds: clue.relatedCharacterIds.filter(id => characterIds.has(id)) })),
       characters: rolledBackCharacters,
+      chapters: project.chapters.map(ch => ({ ...ch, povCharacterId: ch.povCharacterId && characterIds.has(ch.povCharacterId) ? ch.povCharacterId : undefined, associatedEventIds: ch.associatedEventIds.filter(id => eventIds.has(id)) })),
       events: rolledBackEvents
     };
     this.saveProject(updated);

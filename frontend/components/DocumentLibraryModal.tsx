@@ -1,6 +1,7 @@
 import { Dialog } from './Dialog';
+import { PdfDocumentViewer } from './PdfDocumentViewer';
 import { filterDocumentChapters } from './documentLibrarySearch';
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { ProjectData, ImportedDocument, DocumentExcerpt, LorebookEntry } from '../types';
 import { DocumentParserService } from '../services/documentParserService';
 import { AIProviderService } from '../services/aiProviderService';
@@ -50,17 +51,41 @@ export const DocumentLibraryModal: React.FC<DocumentLibraryModalProps> = ({
   const [probeAnswer, setProbeAnswer] = useState<string>('');
   const [isProbing, setIsProbing] = useState<boolean>(false);
 
+  const latest = useRef({ project, onUpdateProject });
+  latest.current = { project, onUpdateProject };
+  const mounted = useRef(true);
+  const uploadRun = useRef<object | null>(null);
+  const probeRun = useRef<AbortController | null>(null);
+  const selectedSource = useRef('');
+  const excerptSource = useRef('');
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; uploadRun.current = null; probeRun.current?.abort(); }; }, []);
+  useEffect(() => { uploadRun.current = null; setIsUploading(false); }, [project.id]);
+  const commit = (updated: ProjectData) => {
+    if (!mounted.current || updated.id !== latest.current.project.id) return;
+    latest.current.project = updated; latest.current.onUpdateProject(updated);
+  };
   const docs = project.referenceDocs || [];
   const currentDoc = docs.find(d => d.id === selectedDocId) || docs[0];
   const currentChapter = currentDoc?.parsedChapters?.[selectedChapterIdx] || currentDoc?.parsedChapters?.[0];
 
+  const sourceKey = JSON.stringify([project.id, currentDoc?.id, currentChapter?.id, currentChapter?.content]);
+  selectedSource.current = sourceKey;
+  useEffect(() => {
+    probeRun.current?.abort(); probeRun.current = null;
+    setIsProbing(false); setProbeAnswer(''); setHighlightSelection(''); excerptSource.current = '';
+    setNewCardNote('');
+  }, [sourceKey]);
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
+    const files = Array.from(e.target.files || []);
     if (!files || files.length === 0) return;
 
+    if (uploadRun.current) return;
+    const run = {}; uploadRun.current = run;
+    const sourceId = project.id;
     setIsUploading(true);
     try {
-      const newDocs: ImportedDocument[] = [...docs];
+      const newDocs: ImportedDocument[] = [];
 
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
@@ -77,22 +102,24 @@ export const DocumentLibraryModal: React.FC<DocumentLibraryModalProps> = ({
           parsed = await DocumentParserService.parseTxtFile(file);
         }
 
+        if (!mounted.current || uploadRun.current !== run || latest.current.project.id !== sourceId) return;
         parsed.category = 'worldbuilding';
         parsed.tags = ['外部导入', ext?.toUpperCase() || 'TXT'];
         parsed.excerpts = [];
         newDocs.unshift(parsed);
       }
 
-      const updated = { ...project, referenceDocs: newDocs };
-      onUpdateProject(updated);
+      if (!mounted.current || uploadRun.current !== run || latest.current.project.id !== sourceId) return;
+      const current = latest.current.project;
+      commit({ ...current, referenceDocs: [...newDocs, ...current.referenceDocs] });
       if (newDocs[0]) {
         setSelectedDocId(newDocs[0].id);
         setSelectedChapterIdx(0);
       }
     } catch (err: any) {
-      alert(`导入文件失败: ${err.message}`);
+      if (mounted.current && uploadRun.current === run) alert(`导入文件失败: ${err.message}`);
     } finally {
-      setIsUploading(false);
+      if (uploadRun.current === run) { uploadRun.current = null; if (mounted.current) setIsUploading(false); }
       e.target.value = '';
     }
   };
@@ -101,7 +128,7 @@ export const DocumentLibraryModal: React.FC<DocumentLibraryModalProps> = ({
     if (!confirm('确定要从参考书架中移除此文件吗？')) return;
     const filtered = docs.filter(d => d.id !== id);
     const updated = { ...project, referenceDocs: filtered };
-    onUpdateProject(updated);
+    commit(updated);
     if (selectedDocId === id) {
       setSelectedDocId(filtered[0]?.id || '');
       setSelectedChapterIdx(0);
@@ -118,15 +145,16 @@ export const DocumentLibraryModal: React.FC<DocumentLibraryModalProps> = ({
   const handleTextSelect = () => {
     const selection = window.getSelection();
     if (selection && selection.toString().trim().length > 0) {
+      excerptSource.current = selectedSource.current;
       setHighlightSelection(selection.toString().trim());
     }
   };
 
   // Create Zettelkasten Excerpt Card (Logseq / Zotero ported)
   const handleSaveExcerptCard = () => {
-    if (!highlightSelection.trim() || !currentDoc) return;
+    if (!highlightSelection.trim() || !currentDoc || excerptSource.current !== sourceKey || selectedSource.current !== sourceKey || !mounted.current) return;
     const card: DocumentExcerpt = {
-      id: `exc_${Date.now()}`,
+      id: `exc_${crypto.randomUUID()}`,
       docId: currentDoc.id,
       docTitle: currentDoc.title,
       chapterTitle: currentChapter?.title || '未命名章节',
@@ -142,7 +170,7 @@ export const DocumentLibraryModal: React.FC<DocumentLibraryModalProps> = ({
     );
 
     const updated = { ...project, referenceDocs: updatedDocs };
-    onUpdateProject(updated);
+    commit(updated);
 
     setHighlightSelection('');
     setNewCardNote('');
@@ -153,7 +181,7 @@ export const DocumentLibraryModal: React.FC<DocumentLibraryModalProps> = ({
   const handleConvertCardToLore = (excerpt: DocumentExcerpt) => {
     const keys = [...excerpt.tags, excerpt.chapterTitle.slice(0, 8)].filter(Boolean);
     const newLore: LorebookEntry = {
-      id: `lore_${Date.now()}`,
+      id: `lore_${crypto.randomUUID()}`,
       name: `考据·${excerpt.chapterTitle}`,
       keys: keys.length > 0 ? keys : ['参考设定'],
       content: `【文献摘录依据·《${excerpt.docTitle}》】：\n${excerpt.selectedText}\n\n【创作者备忘】：${excerpt.userNote}`,
@@ -169,14 +197,16 @@ export const DocumentLibraryModal: React.FC<DocumentLibraryModalProps> = ({
     } else {
       const updatedLore = [...project.lorebook, newLore];
       const updated = { ...project, lorebook: updatedLore };
-      onUpdateProject(updated);
+      commit(updated);
     }
     alert(`成功！已将卡片转录为世界书词条【${newLore.name}】，触发词: [${newLore.keys.join(', ')}]`);
   };
 
   // AI RAG Deep Probe (Obsidian Smart Connections / TaleCrafter ported)
   const handleRunAIProbe = async (customInstruction?: string) => {
-    if (!currentChapter || isProbing) return;
+    if (!currentChapter || probeRun.current) return;
+    const controller = new AbortController(); probeRun.current = controller;
+    const source = sourceKey;
     setIsProbing(true);
     setProbeAnswer('');
 
@@ -194,14 +224,15 @@ ${query}
     try {
       const res = await AIProviderService.generateText(project.aiConfig, {
         prompt,
-        systemInstruction: '你是一位精通古代生活史、器物学与民间风俗的专业文学考据学者。',
-        overrideSampling: { temperature: 0.6 },
+        systemInstruction: '根据给出的文献客观考据，不捏造未出现的事实。',
+        authorsNote: project.aiConfig.authorsNote.enabled ? project.aiConfig.authorsNote.content : undefined,
+        signal: controller.signal,
       });
-      setProbeAnswer(res);
+      if (mounted.current && !controller.signal.aborted && probeRun.current === controller && selectedSource.current === source) setProbeAnswer(res);
     } catch (err: any) {
-      setProbeAnswer(`AI 考据解析出错: ${err.message}`);
+      if (mounted.current && !controller.signal.aborted && probeRun.current === controller) setProbeAnswer(`AI 考据解析出错: ${err.message}`);
     } finally {
-      setIsProbing(false);
+      if (probeRun.current === controller) { probeRun.current = null; if (mounted.current) setIsProbing(false); }
     }
   };
 
@@ -397,27 +428,8 @@ ${query}
           {/* Right: Research & Reader Workbench */}
           <div className={`${mobilePane === 'READER' ? 'flex' : 'hidden'} md:flex min-w-0 md:col-span-6 bg-slate-950/60 p-3 sm:p-5 flex-col overflow-hidden`}>
             {currentDoc ? (
-              currentDoc.format === 'pdf' && currentDoc.fileBlobUrl ? (
-                // PDF Native Split Viewer
-                <div className="flex-1 flex flex-col h-full">
-                  <div className="flex items-center justify-between pb-3 border-b border-slate-800 text-xs">
-                    <span className="font-semibold text-slate-200">{currentDoc.title}</span>
-                    <a
-                      href={currentDoc.fileBlobUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-purple-400 hover:underline flex items-center gap-1"
-                    >
-                      <ExternalLink className="w-3 h-3" />
-                      在新标签页独立全屏打开
-                    </a>
-                  </div>
-                  <iframe
-                    src={currentDoc.fileBlobUrl}
-                    className="flex-1 w-full rounded-xl border border-slate-800 mt-3 bg-slate-900"
-                    title={currentDoc.title}
-                  />
-                </div>
+              currentDoc.format === 'pdf' ? (
+                <PdfDocumentViewer document={currentDoc} onRelink={doc => { const current = latest.current.project; if (current.id !== project.id) return; commit({ ...current, referenceDocs: current.referenceDocs.map(d => d.id === doc.id ? doc : d) }); }} />
               ) : (
                 // TXT / EPUB Reading & Zettelkasten Station
                 <div className="flex-1 flex flex-col overflow-hidden">

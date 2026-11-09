@@ -11,7 +11,8 @@ export class RecursiveSummaryEngine {
    */
   public static async extractAndCompressChapter(
     project: ProjectData,
-    chapter: Chapter
+    chapter: Chapter,
+    signal?: AbortSignal
   ): Promise<ChapterExtraction> {
     const textExcerpt = chapter.content.slice(0, 3000) + (chapter.content.length > 3000 ? '\n...\n' + chapter.content.slice(-1500) : '');
 
@@ -38,7 +39,8 @@ ${textExcerpt}
     const rawText = await AIProviderService.generateText(project.aiConfig, {
       prompt,
       systemInstruction: '你是一位极其精确的事件因果整理官，提取客观事实，过滤文学修辞。',
-      overrideSampling: { temperature: 0.2 },
+      signal,
+      authorsNote: project.aiConfig.authorsNote.enabled ? project.aiConfig.authorsNote.content : undefined,
       thinkingBudget: 0,
     });
 

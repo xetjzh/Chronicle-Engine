@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { ProjectData, Character } from '../types';
 import { CharacterCardGeneratorModal } from './CharacterCardGeneratorModal';
-import { 
-  Users, UserCheck, Heart, Shield, Brain, Eye, Plus, Sparkles, AlertCircle, Wand2 
+import { createBlankCharacter } from '../services/characterData';
+import {
+  Users, UserCheck, Heart, Shield, Brain, Eye, Plus, Sparkles, AlertCircle, Wand2
 } from 'lucide-react';
 
 interface CharacterManagerProps {
@@ -16,12 +17,15 @@ export const CharacterManager: React.FC<CharacterManagerProps> = ({
 }) => {
   const [selectedCharId, setSelectedCharId] = useState<string>(project.characters[0]?.id || '');
   const [showCardGenerator, setShowCardGenerator] = useState<boolean>(false);
+  const latest = useRef(project);
+  const callback = useRef(onUpdateProject);
+  latest.current = project; callback.current = onUpdateProject;
 
   const currentChar = project.characters.find(c => c.id === selectedCharId) || project.characters[0];
 
   const handleUpdateCurrentChar = (partial: Partial<Character>) => {
     if (!currentChar) return;
-    const updatedChars = project.characters.map(c => 
+    const updatedChars = project.characters.map(c =>
       c.id === currentChar.id ? { ...c, ...partial } : c
     );
     const updated = { ...project, characters: updatedChars };
@@ -29,37 +33,21 @@ export const CharacterManager: React.FC<CharacterManagerProps> = ({
   };
 
   const handleAddNewCharacter = () => {
-    const newChar: Character = {
-      id: `char_${Date.now()}`,
-      name: '新登场人物',
-      title: '流浪刀客',
-      age: 26,
-      gender: '男',
-      factionId: project.factions[0]?.id || 'fac_common',
-      currentLocationId: project.locations[0]?.id || 'loc_tavern',
-      occupation: '走镖游侠',
-      appearance: '身穿黑布风氅，面颊清冷，习惯将刀柄握于左手。',
-      personality: '寡言坚毅，信守诺言',
-      coreDesire: '筹措路费寻找失踪的同胞兄长',
-      greatestFear: '再度遭遇同门师友的背叛',
-      currentMood: '警惕',
-      moralityAlignment: '守序中立',
-      health: 90,
-      wealth: 15,
-      inventory: ['生锈长刀', '干粮两副', '半筒碎银'],
-      currentGoal: '在寒江关打听兄长消息',
-      isAlive: true,
-      relationships: {},
-      knownFacts: []
-    };
+    const newChar = createBlankCharacter(latest.current);
     const updated = { ...project, characters: [...project.characters, newChar] };
     onUpdateProject(updated);
     setSelectedCharId(newChar.id);
   };
 
   const handleAddGeneratedCharacter = (char: Character) => {
-    const updated = { ...project, characters: [...project.characters, char] };
-    onUpdateProject(updated);
+    if (latest.current.id !== project.id) return;
+    const current = latest.current;
+    const updated = { ...current, characters: [...current.characters, {
+      ...char, currentLocationId: current.locations.some(l => l.id === char.currentLocationId) ? char.currentLocationId : '',
+      factionId: current.factions.some(f => f.id === char.factionId) ? char.factionId : '',
+    }] };
+    latest.current = updated;
+    callback.current(updated);
     setSelectedCharId(char.id);
   };
 
@@ -103,8 +91,8 @@ export const CharacterManager: React.FC<CharacterManagerProps> = ({
                   onClick={() => setSelectedCharId(char.id)}
                   aria-pressed={isSelected}
                   className={`block w-full text-left p-3.5 rounded-xl border text-xs cursor-pointer transition ${
-                    isSelected 
-                      ? 'bg-purple-950/40 border-purple-500 shadow' 
+                    isSelected
+                      ? 'bg-purple-950/40 border-purple-500 shadow'
                       : 'bg-slate-800/40 border-slate-800 hover:border-slate-700'
                   }`}
                 >
@@ -156,7 +144,7 @@ export const CharacterManager: React.FC<CharacterManagerProps> = ({
               <div className="flex items-center gap-2 text-xs">
                 <span className="text-slate-400">存活状态：</span>
                 <button
-                  onClick={() => handleUpdateCurrentChar({ isAlive: !currentChar.isAlive })}
+                  onClick={() => handleUpdateCurrentChar({ isAlive: !currentChar.isAlive, diedAtTimeStep: currentChar.isAlive ? project.timeStepIndex : undefined })}
                   className={`px-3 py-1 rounded-full font-medium ${
                     currentChar.isAlive ? 'bg-green-950 text-green-300 border border-green-800' : 'bg-red-950 text-red-300 border border-red-800'
                   }`}
@@ -166,6 +154,11 @@ export const CharacterManager: React.FC<CharacterManagerProps> = ({
               </div>
             </div>
 
+            <div className="grid gap-3 sm:grid-cols-2 text-xs">
+              <label>所在地点<select aria-label="人物所在地点" value={project.locations.some(l => l.id === currentChar.currentLocationId) ? currentChar.currentLocationId : ''} onChange={e => handleUpdateCurrentChar({ currentLocationId: e.target.value })} className="block w-full rounded bg-slate-800 p-2 mt-1"><option value="">尚未分配地点</option>{project.locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
+              <label>所属势力<select aria-label="人物所属势力" value={project.factions.some(f => f.id === currentChar.factionId) ? currentChar.factionId : ''} onChange={e => handleUpdateCurrentChar({ factionId: e.target.value })} className="block w-full rounded bg-slate-800 p-2 mt-1"><option value="">无所属势力</option>{project.factions.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}</select></label>
+              {!project.locations.some(l => l.id === currentChar.currentLocationId) && <p role="status" className="text-amber-300">请先创建地点并在这里分配，人物才能参与世界模拟。</p>}
+            </div>
             {/* Psychological & Motives */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
               <div className="space-y-3 bg-slate-950/60 p-4 rounded-xl border border-slate-800">
@@ -213,7 +206,7 @@ export const CharacterManager: React.FC<CharacterManagerProps> = ({
                     <input
                       type="number"
                       value={currentChar.health}
-                      onChange={e => handleUpdateCurrentChar({ health: parseInt(e.target.value) || 0 })}
+                      onChange={e => handleUpdateCurrentChar({ health: Math.min(100, Math.max(0, Number(e.target.value) || 0)) })}
                       className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-xs text-slate-200 outline-none"
                     />
                   </div>
@@ -222,7 +215,7 @@ export const CharacterManager: React.FC<CharacterManagerProps> = ({
                     <input
                       type="number"
                       value={currentChar.wealth}
-                      onChange={e => handleUpdateCurrentChar({ wealth: parseInt(e.target.value) || 0 })}
+                      onChange={e => handleUpdateCurrentChar({ wealth: Math.max(0, Number(e.target.value) || 0) })}
                       className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-xs text-slate-200 outline-none"
                     />
                   </div>

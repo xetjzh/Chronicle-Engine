@@ -37,42 +37,24 @@ export class SimulationEngine {
       const location = locations.find(l => l.id === locId);
       if (!location) return;
 
-      if (charsInLoc.length >= 2) {
-        // High probability of dialogue/confrontation/trade
-        const charA = charsInLoc[0];
-        const charB = charsInLoc[1];
-        
-        const encounterEvent = this.generateSocialEncounter(
-          charA,
-          charB,
-          location,
-          nextTimeStr,
-          nextTimeStepIndex,
-          existingEvents
-        );
-
-        if (encounterEvent) {
-          newEvents.push(encounterEvent);
-          existingEvents.push(encounterEvent);
-          this.propagateFactsFromEvent(encounterEvent, [charA, charB]);
-        }
-      } else if (charsInLoc.length === 1) {
-        // Solo autonomous behavior: search, travel or rest
-        const solo = charsInLoc[0];
-        const soloEvent = this.generateSoloAction(
-          solo,
-          location,
-          locations,
-          nextTimeStr,
-          nextTimeStepIndex,
-          existingEvents
-        );
-        if (soloEvent) {
-          newEvents.push(soloEvent);
-          existingEvents.push(soloEvent);
-          this.propagateFactsFromEvent(soloEvent, [solo]);
-        }
+      const emit = (event: WorldEvent | null, participants: Character[]) => {
+        if (!event) return; newEvents.push(event); existingEvents.push(event);
+        this.propagateFactsFromEvent(event, participants);
+      };
+      // Rest is a personal need even when others share the location.
+      const available: Character[] = [];
+      for (const char of charsInLoc) {
+        if (char.health < 70) emit(this.generateSoloAction(char, location, locations, nextTimeStr, nextTimeStepIndex, existingEvents), [char]);
+        else available.push(char);
       }
+      const offset = available.length ? project.timeStepIndex % available.length : 0;
+      const ordered = [...available.slice(offset), ...available.slice(0, offset)];
+      for (let index = 0; index < ordered.length; index += 2) {
+        const first = ordered[index], second = ordered[index + 1];
+        if (second) emit(this.generateSocialEncounter(first, second, location, nextTimeStr, nextTimeStepIndex, existingEvents), [first, second]);
+        else emit(this.generateSoloAction(first, location, locations, nextTimeStr, nextTimeStepIndex, existingEvents), [first]);
+      }
+
     });
 
     const updatedProject: ProjectData = {
@@ -93,7 +75,7 @@ export class SimulationEngine {
     const steps = Math.floor(addHours / 2) || 1;
     const nextIdx = (currIdx + steps) % hourTokens.length;
     const basePrefix = currentTime.split(' ')[0] || '第1日';
-    
+
     // Day rollover if index loops
     if (currIdx + steps >= hourTokens.length) {
       const days = Math.floor((currIdx + steps) / hourTokens.length);
@@ -122,7 +104,7 @@ export class SimulationEngine {
       a.currentMood = '警惕';
       b.currentMood = '警惕';
       return {
-        id: `evt_${Date.now()}_${Math.floor(Math.random()*1000)}`,
+        id: `evt_${crypto.randomUUID()}`,
         simulationTime: timeStr,
         timeStepIndex: stepIdx,
         eventType: 'encounter',
@@ -147,7 +129,7 @@ export class SimulationEngine {
       const oldWealthA = a.wealth, oldWealthB = b.wealth;
       a.wealth -= amount; b.wealth += amount;
       return {
-        id: `evt_${Date.now()}_${Math.floor(Math.random()*1000)}`,
+        id: `evt_${crypto.randomUUID()}`,
         simulationTime: timeStr,
         timeStepIndex: stepIdx,
         eventType: 'dialogue',
@@ -171,7 +153,7 @@ export class SimulationEngine {
 
     // Default neutral interaction
     return {
-      id: `evt_${Date.now()}_${Math.floor(Math.random()*1000)}`,
+      id: `evt_${crypto.randomUUID()}`,
       simulationTime: timeStr,
       timeStepIndex: stepIdx,
       eventType: 'dialogue',
@@ -203,7 +185,7 @@ export class SimulationEngine {
       char.health = Math.min(100, char.health + 10);
       char.currentMood = '平静';
       return {
-        id: `evt_${Date.now()}_${Math.floor(Math.random()*1000)}`,
+        id: `evt_${crypto.randomUUID()}`,
         simulationTime: timeStr,
         timeStepIndex: stepIdx,
         eventType: 'rest',
@@ -226,7 +208,7 @@ export class SimulationEngine {
 
     if (loc.type === 'market') {
       return {
-        id: `evt_${Date.now()}_${Math.floor(Math.random()*1000)}`,
+        id: `evt_${crypto.randomUUID()}`,
         simulationTime: timeStr,
         timeStepIndex: stepIdx,
         eventType: 'discovery',
@@ -253,7 +235,7 @@ export class SimulationEngine {
         const oldLocId = char.currentLocationId;
         char.currentLocationId = targetLocId;
         return {
-          id: `evt_${Date.now()}_${Math.floor(Math.random()*1000)}`,
+          id: `evt_${crypto.randomUUID()}`,
           simulationTime: timeStr,
           timeStepIndex: stepIdx,
           eventType: 'travel',
@@ -287,7 +269,7 @@ export class SimulationEngine {
       const factText = `亲历事件【${event.title}】：${event.description}`;
       if (!char.knownFacts.some(f => f.fact === factText)) {
         char.knownFacts.push({
-          id: `f_${Date.now()}_${Math.floor(Math.random()*1000)}`,
+          id: `f_${crypto.randomUUID()}`,
           fact: factText,
           learnedAtTime: event.simulationTime,
           sourceEventId: event.id,

@@ -2,7 +2,7 @@ export type CreationMode = 'SIMULATION' | 'CO_WRITING' | 'AUTO_NOVEL';
 
 export type AIProviderType = 'gemini' | 'ollama' | 'openai_compatible';
 
-export type AIPresetType = 
+export type AIPresetType =
   | 'sillytavern_literary'       // SillyTavern 风格：强调细腻肢体语言与古典描写
   | 'ollama_arm_efficient'       // 适配 4核 ARM 本地模型：短上下文剪裁、强防复读惩罚
   | 'deepseek_causality'         // DeepSeek 风格：高逻辑自洽与因果步步为营
@@ -100,7 +100,7 @@ export interface Character {
   currentLocationId: string;
   occupation: string;
   appearance: string;
-  
+
   personality: string;
   coreDesire: string;
   greatestFear: string;
@@ -116,6 +116,7 @@ export interface Character {
   relationships: Record<string, string>;
   knownFacts: CognitiveFact[];
   isAlive: boolean;
+  diedAtTimeStep?: number;
 }
 
 export interface WorldEvent {
@@ -222,6 +223,8 @@ export interface WorldSnapshot {
   characters: Character[];
   eventsCount: number;
   description: string;
+  events?: WorldEvent[];
+  worldState?: { worldName: string; locations: LocationNode[]; factions: Faction[]; rules: WorldRule[]; foreshadowing: ForeshadowingClue[] };
 }
 
 export interface ConsistencyIssue {
@@ -271,11 +274,13 @@ export interface ImportedDocument {
     content: string;
   }[];
   fileBlobUrl?: string;
+  fileDataBase64?: string;
   excerpts?: DocumentExcerpt[];
   importedAt: string;
 }
 
 export interface WritingDeskSettings {
+  lastWritingDate?: string;
   targetDailyWords: number;
   currentSessionWords: number;
   isZenMode: boolean;
@@ -290,6 +295,7 @@ export interface WritingDeskSettings {
 }
 
 export interface ProjectData {
+  recoveryWarnings?: string[];
   id: string;
   title: string;
   genre: string;
@@ -297,7 +303,7 @@ export interface ProjectData {
   worldName: string;
   currentSimulationTime: string;
   timeStepIndex: number;
-  
+
   rules: WorldRule[];
   locations: LocationNode[];
   factions: Faction[];

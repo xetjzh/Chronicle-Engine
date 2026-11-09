@@ -4,6 +4,15 @@ import * as novel from './novelAsync.ts';
 
 const book = () => ({ id: 'book', title: '原作品名', chapters: [{ id: 'one', title: '原章名', content: '原正文', outline: '原大纲', wordCount: 3, status: 'draft' }, { id: 'two', title: '第二章', content: '其它正文', outline: '' }] });
 
+test('F21 regenerating prose clears prior analysis while extracting new facts preserves the manuscript', () => {
+  const source = book(); source.chapters[0] = { ...source.chapters[0], status: 'final', extraction: { chapterSummary: '旧摘要' }, tensionScore: 99, actBeats: [{ content: '旧幕' }] };
+  const snapshot = novel.captureNovelChapter(source, 'one');
+  const result = novel.applyNovelChapterPatch(source, snapshot, { content: '新的故事' });
+  assert.equal(result.chapters[0].extraction, undefined); assert.equal(result.chapters[0].tensionScore, undefined); assert.equal(result.chapters[0].actBeats, undefined); assert.equal(result.chapters[0].status, 'draft');
+  const extracted = novel.applyNovelChapterPatch(source, snapshot, { extraction: { chapterSummary: '新摘要' }, tensionScore: 70 });
+  assert.equal(extracted.chapters[0].content, '原正文'); assert.equal(extracted.chapters[0].extraction.chapterSummary, '新摘要');
+});
+
 test('a generated chapter merges with the latest unrelated edits', () => {
   const source = book();
   const snapshot = novel.captureNovelChapter(source, 'one');

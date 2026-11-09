@@ -1,6 +1,7 @@
 import type { ProjectData, ConsistencyIssue, WorldEvent } from '../types';
 import { AIProviderService } from './aiProviderService';
 import { LorebookService } from './lorebookService';
+import { HierarchicalMemoryService } from './hierarchicalMemoryService';
 import { ChapterExpansionEngine } from './chapterExpansionEngine';
 import type { ExpansionProgressCallback } from './chapterExpansionEngine';
 
@@ -17,6 +18,7 @@ export class GeminiService {
     events: WorldEvent[];
     userConstraint?: string;
     targetWordCount?: number;
+    signal?: AbortSignal;
     onProgress?: ExpansionProgressCallback;
   }): Promise<{ title: string; outline: string; content: string; activatedLorebookKeys: string[] }> {
     const { project, volumeNumber, chapterNumber, povCharacterId, events, userConstraint, onProgress } = params;
@@ -37,6 +39,8 @@ export class GeminiService {
       events,
       userConstraint,
       onProgress,
+      targetWordCount: params.targetWordCount,
+      signal: params.signal,
     });
     if (!expanded.content?.trim()) throw new Error('章节生成返回的正文为空，请重试。');
 
@@ -56,16 +60,16 @@ export class GeminiService {
 
     // 1. Deterministic Rule-Based Checks
     project.characters.forEach(c => {
-      if (!c.isAlive) {
-        const recentParticipation = project.events.filter(e => e.participantIds.includes(c.id));
+      if (!c.isAlive && c.diedAtTimeStep !== undefined) {
+        const recentParticipation = project.events.filter(e => e.participantIds.includes(c.id) && e.timeStepIndex > c.diedAtTimeStep!);
         if (recentParticipation.length > 0) {
           issues.push({
-            id: `iss_${Date.now()}_dead`,
+            id: `iss_dead_${c.id}`,
             severity: 'critical',
             title: `已故角色仍然产生事件`,
-            description: `角色【${c.name}】已标记为死亡，但历史事件表中仍有其参与记录。`,
+            description: `角色【${c.name}】死亡时间步为 ${c.diedAtTimeStep}，此后仍有参与事件。`,
             suspectedEntities: [c.name],
-            suggestedFix: `将相关事件的参与者移除或恢复角色生存状态。`
+            suggestedFix: `核对死亡时间与死后事件，不要删除生前的历史记录。`
           });
         }
       }
@@ -105,7 +109,7 @@ ${recentChapters}
     const response = await AIProviderService.generateText(project.aiConfig, {
       prompt: auditPrompt,
       thinkingBudget: 0,
-      overrideSampling: { temperature: 0.2 },
+      authorsNote: project.aiConfig.authorsNote.enabled ? project.aiConfig.authorsNote.content : undefined,
     });
     const text = response.trim();
     if (text !== 'ALL_CONSISTENT') {
@@ -139,9 +143,12 @@ ${recentChapters}
    */
   public static async coWriteSuggestions(
     project: ProjectData,
-    directionPrompt: string
+    directionPrompt: string,
+    signal?: AbortSignal
   ): Promise<string[]> {
-    const prompt = `当前作品：《${project.title}》
+    const memory = HierarchicalMemoryService.buildRollingMemoryContext(project, Math.max(0, ...project.chapters.map(c => c.chapterNumber)) + 1);
+    const prompt = `${memory}
+当前作品：《${project.title}》
 世界当前时间：${project.currentSimulationTime}
 当前主要人物分布：${project.characters.map(c => `${c.name}在${c.currentLocationId}(心境:${c.currentMood})`).join('、')}
 用户提出的剧情意图：“${directionPrompt}”
@@ -155,7 +162,8 @@ ${recentChapters}
 
     const text = await AIProviderService.generateText(project.aiConfig, {
       prompt,
-      overrideSampling: { temperature: 0.7 },
+      signal,
+      authorsNote: project.aiConfig.authorsNote.enabled ? project.aiConfig.authorsNote.content : undefined,
     });
     if (!text.trim()) throw new Error('创作建议返回内容为空，请重试。');
     const lines = text.split('\n').filter(line => /^\d+\./.test(line.trim()));

@@ -6,9 +6,9 @@ import { ProjectLibraryModal } from './components/ProjectLibraryModal';
 import { AuthorDeskEditor } from './components/AuthorDeskEditor';
 import { Dialog } from './components/Dialog';
 import { parseProjectBackup } from './services/backupValidation';
-import { 
+import {
   Globe, BookOpen, Users, Compass, Eye, ShieldCheck,
-  Download, Upload, Sparkles, Settings2, RefreshCw, Cpu, 
+  Download, Upload, Sparkles, Settings2, RefreshCw, Cpu,
   BookMarked, Feather, FileText, Activity, Dices,
   ChevronRight, Book, Clock3, ScrollText, CircleHelp, Menu, X, Check, AlertCircle
 } from 'lucide-react';
@@ -394,6 +394,7 @@ export default function App() {
         </header>
 
         <main id="workspace-main" className="workspace-content" tabIndex={-1}>
+          {!!project.recoveryWarnings?.length && <details className="mb-4 rounded-lg border border-amber-800 bg-amber-950/20 p-3 text-xs text-amber-200"><summary className="cursor-pointer">存档恢复提醒（{project.recoveryWarnings.length}）</summary><ul className="mt-3 list-disc space-y-2 pl-5">{project.recoveryWarnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul><p className="mt-3">原稿内容已保留。请检查待确认的关联并导出新的完整备份。</p><button onClick={() => handleUpdateProject({ ...latestProject.current, recoveryWarnings: [] })} className="mt-3 underline">已查看，关闭提醒</button></details>}
           <section className="page-heading">
             <div>
               <div className="mb-2 flex items-center gap-2">
@@ -487,7 +488,7 @@ export default function App() {
           onClose={() => setShowDocLibrary(false)}
           onInsertReferenceSnippet={(snippet) => {
             if (project.chapters[0]) {
-              const updated = project.chapters.map((ch, idx) => 
+              const updated = project.chapters.map((ch, idx) =>
                 idx === 0 ? { ...ch, content: ch.content + '\n\n' + snippet } : ch
               );
               handleUpdateProject({ ...project, chapters: updated });
@@ -515,7 +516,7 @@ export default function App() {
           onClose={() => setShowChaosModal(false)}
           onApplyTwist={(twistText) => {
             if (project.chapters[0]) {
-              const updated = project.chapters.map((ch, idx) => 
+              const updated = project.chapters.map((ch, idx) =>
                 idx === 0 ? { ...ch, outline: ch.outline ? `${ch.outline}\n${twistText}` : twistText } : ch
               );
               handleUpdateProject({ ...project, chapters: updated });
@@ -544,7 +545,7 @@ export default function App() {
                 <ShieldCheck className="w-5 h-5 text-purple-400" />
                 <h3 id="audit-title" className="text-sm font-bold text-white">世界因果审计</h3>
               </div>
-              <button 
+              <button
                 onClick={() => setShowAuditModal(false)}
                 className="text-slate-400 hover:text-white"
               >
@@ -566,8 +567,8 @@ export default function App() {
                   <div
                     key={issue.id}
                     className={`p-3.5 rounded-xl border ${
-                      issue.severity === 'critical' 
-                        ? 'bg-red-950/40 border-red-800/80 text-red-200' 
+                      issue.severity === 'critical'
+                        ? 'bg-red-950/40 border-red-800/80 text-red-200'
                         : issue.severity === 'warning'
                         ? 'bg-amber-950/40 border-amber-800/80 text-amber-200'
                         : 'bg-green-950/30 border-green-800/60 text-green-200'

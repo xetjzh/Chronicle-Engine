@@ -20,6 +20,18 @@ export const DeploymentGuideModal: React.FC<DeploymentGuideModalProps> = ({ onCl
         </button>
       </div>
 
+      <DeploymentGuideContent />
+      <div className="pt-4 border-t border-slate-800 flex justify-end">
+        <button onClick={onClose} className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-semibold transition">
+          我已了解
+        </button>
+      </div>
+    </Dialog>
+  );
+};
+
+export function DeploymentGuideContent() {
+  return (
       <div className="space-y-4 text-xs leading-relaxed">
         <div className="p-4 bg-purple-950/30 border border-purple-800/60 rounded-xl space-y-2">
           <div className="font-semibold text-purple-300 flex items-center gap-1.5">
@@ -85,11 +97,6 @@ npm run smoke -- http://127.0.0.1:8080`}</code></pre>
         </div>
       </div>
 
-      <div className="pt-4 border-t border-slate-800 flex justify-end">
-        <button onClick={onClose} className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-semibold transition">
-          我已了解
-        </button>
-      </div>
-    </Dialog>
+
   );
-};
+}

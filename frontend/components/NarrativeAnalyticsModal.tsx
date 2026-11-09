@@ -21,6 +21,7 @@ export const NarrativeAnalyticsModal: React.FC<NarrativeAnalyticsModalProps> = (
   onClose,
 }) => {
   const dialogTitleId = React.useId();
+  const chapterTarget = project.settings.chapterLengthTarget;
   // Compute Tension & Length data per chapter
   const tensionData = useMemo(() => {
     return project.chapters.map(ch => ({
@@ -29,9 +30,9 @@ export const NarrativeAnalyticsModal: React.FC<NarrativeAnalyticsModalProps> = (
       title: ch.title,
       tension: getNarrativeTension(ch),
       wordCount: ch.wordCount,
-      target: 4000,
+      target: chapterTarget,
     }));
-  }, [project.chapters]);
+  }, [project.chapters, chapterTarget]);
 
   // Compute Character Appearance Frequency
   const characterPresence = useMemo(() => {
@@ -97,8 +98,8 @@ export const NarrativeAnalyticsModal: React.FC<NarrativeAnalyticsModalProps> = (
               <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
               均章字数
             </div>
-            <div className={`text-lg font-bold font-mono mt-1 ${avgWords >= 4000 ? 'text-green-400' : 'text-amber-400'}`}>
-              {avgWords} <span className="text-xs text-slate-400 font-normal">字 / 章 (目标: ≥4000)</span>
+            <div className={`text-lg font-bold font-mono mt-1 ${avgWords >= chapterTarget ? 'text-green-400' : 'text-amber-400'}`}>
+              {avgWords} <span className="text-xs text-slate-400 font-normal">字 / 章 (目标: {chapterTarget})</span>
             </div>
           </div>
 
@@ -166,7 +167,7 @@ export const NarrativeAnalyticsModal: React.FC<NarrativeAnalyticsModalProps> = (
             <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-4 space-y-3">
               <h4 className="text-sm font-semibold text-white flex items-center gap-1.5">
                 <BarChart3 className="w-4 h-4 text-emerald-400" />
-                单章字数达标监测 (目标: 4000+ 字)
+                单章字数达标监测 (目标: {chapterTarget} 字)
               </h4>
               <div className="h-44 w-full">
                 <ResponsiveContainer width="100%" height="100%">

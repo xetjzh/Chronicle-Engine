@@ -1,6 +1,7 @@
 import { Dialog } from './Dialog';
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { ProjectData, Character } from '../types';
+import { parseGeneratedCharacter } from '../services/characterData';
 import { AIProviderService } from '../services/aiProviderService';
 import { X, Sparkles, UserPlus, RefreshCw, Check, Brain, Shield } from 'lucide-react';
 
@@ -16,11 +17,21 @@ export const CharacterCardGeneratorModal: React.FC<CharacterCardGeneratorModalPr
   onClose,
 }) => {
   const dialogTitleId = React.useId();
-  const [briefPrompt, setBriefPrompt] = useState('寒江关守城卫所的一名年迈仵作，暗中受九瓣青莲商号接济，精通边关百草毒物，性格孤僻胆小。');
+  const [briefPrompt, setBriefPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
 
+  const request = useRef<AbortController | null>(null);
+  const mounted = useRef(true);
+  const latest = useRef({ project, onAddCharacter, onClose });
+  latest.current = { project, onAddCharacter, onClose };
+  const [error, setError] = useState('');
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; request.current?.abort(); }; }, []);
+  useEffect(() => { request.current?.abort(); request.current = null; setIsGenerating(false); }, [project.id]);
+  const close = () => { request.current?.abort(); request.current = null; setIsGenerating(false); onClose(); };
   const handleGenerateCharacter = async () => {
-    if (!briefPrompt.trim() || isGenerating) return;
+    if (!briefPrompt.trim() || request.current) return;
+    const controller = new AbortController(); request.current = controller;
+    const sourceId = project.id; setError('');
     setIsGenerating(true);
 
     const prompt = `你是一位专注于虚构群像世界的角色设计师。请根据作者给出的设定构思，为作品《${project.title}》（世界名:${project.worldName}）生成一位具有严密心理机制与社会关系的新角色。
@@ -42,68 +53,36 @@ export const CharacterCardGeneratorModal: React.FC<CharacterCardGeneratorModalPr
   "moralityAlignment": "中立善",
   "health": 85,
   "wealth": 30,
-  "inventory": ["骨刀", "干粮", "雄黄粉"],
+  "inventory": ["符合本书设定的物品"],
   "currentGoal": "当前行动目标"
 }`;
 
     try {
       const resultText = await AIProviderService.generateText(project.aiConfig, {
         prompt,
-        overrideSampling: { temperature: 0.8 },
+        authorsNote: project.aiConfig.authorsNote.enabled ? project.aiConfig.authorsNote.content : undefined,
+        signal: controller.signal,
       });
 
-      // Parse JSON from text
-      const cleanJson = resultText.replace(/```json|```/gi, '').trim();
-      const parsed = JSON.parse(cleanJson);
-
-      const newChar: Character = {
-        id: `char_${Date.now()}`,
-        name: parsed.name || '新角色',
-        title: parsed.title || '江湖旅客',
-        age: parsed.age || 30,
-        gender: parsed.gender || '男',
-        factionId: project.factions[0]?.id || 'fac_common',
-        currentLocationId: project.locations[0]?.id || 'loc_tavern',
-        occupation: parsed.occupation || '浪人',
-        appearance: parsed.appearance || '神色沉静，衣履带泥。',
-        personality: parsed.personality || '深思熟虑',
-        coreDesire: parsed.coreDesire || '谋求安稳度日',
-        greatestFear: parsed.greatestFear || '卷入风波',
-        currentMood: parsed.currentMood || '平静',
-        moralityAlignment: parsed.moralityAlignment || '绝对中立',
-        health: parsed.health || 90,
-        wealth: parsed.wealth || 20,
-        inventory: Array.isArray(parsed.inventory) ? parsed.inventory : ['随身药包'],
-        currentGoal: parsed.currentGoal || '在客栈避雨',
-        isAlive: true,
-        relationships: {},
-        knownFacts: [
-          {
-            id: `fact_init_${Date.now()}`,
-            fact: `了解${project.worldName}的基本地理与风霜时令`,
-            learnedAtTime: project.currentSimulationTime,
-            confidence: 1.0,
-          }
-        ]
-      };
-
-      onAddCharacter(newChar);
-      onClose();
+      if (!mounted.current || controller.signal.aborted || latest.current.project.id !== sourceId || request.current !== controller) return;
+      const newChar = parseGeneratedCharacter(resultText, latest.current.project);
+      latest.current.onAddCharacter(newChar);
+      latest.current.onClose();
     } catch (err: any) {
-      alert(`角色生成解析失败，请精简描述后重试: ${err.message}`);
+      if (mounted.current && !controller.signal.aborted) setError(`人物生成失败：${err.message}`);
     } finally {
-      setIsGenerating(false);
+      if (request.current === controller) { request.current = null; if (mounted.current) setIsGenerating(false); }
     }
   };
 
   return (
-    <Dialog onClose={onClose} titleId={dialogTitleId} className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4" panelClassName="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 text-slate-200 shadow-2xl space-y-4 text-xs">
+    <Dialog onClose={close} titleId={dialogTitleId} className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4" panelClassName="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 text-slate-200 shadow-2xl space-y-4 text-xs">
         <div className="flex items-center justify-between border-b border-slate-800 pb-3">
           <div className="flex items-center gap-2">
             <UserPlus className="w-5 h-5 text-purple-400" />
             <h3 id={dialogTitleId} className="text-sm font-bold text-white">创建人物</h3>
           </div>
-          <button onClick={onClose} aria-label="关闭对话框" className="shrink-0 p-1 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white">
+          <button onClick={close} aria-label="关闭对话框" className="shrink-0 p-1 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -112,13 +91,14 @@ export const CharacterCardGeneratorModal: React.FC<CharacterCardGeneratorModalPr
           写下人物灵感，生成包含性格、动机、随身物品与当前目标的人物档案。
         </p>
 
+        {error && <p role="alert" className="text-red-300">{error}</p>}
         <div>
           <label className="text-slate-300 font-medium block mb-1">人物灵感雏形：</label>
           <textarea
             rows={4}
             value={briefPrompt}
             onChange={e => setBriefPrompt(e.target.value)}
-            placeholder="例如：一位来自江南的落魄琴师，在黑石城以修琴为生，秘密受雇于都巡检司..."
+            placeholder="描述这个人物的身份、动机和与本书的关系…"
             aria-label="人物灵感"
             className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white outline-none focus:border-purple-500 leading-relaxed font-serif"
           />
@@ -126,14 +106,14 @@ export const CharacterCardGeneratorModal: React.FC<CharacterCardGeneratorModalPr
 
         <div className="pt-2 flex justify-end gap-2">
           <button
-            onClick={onClose}
+            onClick={close}
             className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition"
           >
             取消
           </button>
           <button
             onClick={handleGenerateCharacter}
-            disabled={isGenerating}
+            disabled={isGenerating || !briefPrompt.trim()}
             className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white font-semibold rounded-lg transition flex items-center gap-1.5 shadow"
           >
             {isGenerating ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 text-yellow-300" />}

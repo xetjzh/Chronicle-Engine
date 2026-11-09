@@ -10,7 +10,8 @@ export class ChaosTwistService {
    */
   public static async rollChaosTwists(
     project: ProjectData,
-    situationContext?: string
+    situationContext?: string,
+    signal?: AbortSignal
   ): Promise<ChaosTwistPrompt[]> {
     const aliveChars = project.characters.filter(c => c.isAlive).map(c => `${c.name}(${c.occupation}@${c.currentLocationId})`).join(', ');
     const rulesBrief = project.rules.map(r => r.rule).join('；');
@@ -26,7 +27,7 @@ export class ChaosTwistService {
 请生成3个不同维度的意外剧情破局提案（神谕摇骰结果）。
 要求：
 1. 恪守世界观物理、社会与神秘法则，严禁机械降神。
-2. 每一个变故必须源于某角色的既有隐秘动机，或世界自然环境的突变（如寒潮暴雪加剧、官署突击戒严、密库暗渠坍塌）。
+2. 每一个变故必须源于某角色的既有隐秘动机，或世界自然环境的突变（必须符合本书题材、环境和已发生的事实）。
 
 请严格输出纯 JSON 数组：
 [
@@ -40,45 +41,19 @@ export class ChaosTwistService {
   }
 ]`;
 
-    try {
-      const raw = await AIProviderService.generateText(project.aiConfig, {
+    const raw = await AIProviderService.generateText(project.aiConfig, {
         prompt,
-        overrideSampling: { temperature: 0.85 },
+        authorsNote: project.aiConfig.authorsNote.enabled ? project.aiConfig.authorsNote.content : undefined,
+        signal,
       });
 
-      const clean = raw.replace(/```json|```/gi, '').trim();
-      const parsed: ChaosTwistPrompt[] = JSON.parse(clean);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
-      }
-      throw new Error('格式解析不符合预期');
-    } catch {
-      return [
-        {
-          id: 'twist_fallback_1',
-          title: '严霜骤降·宵禁长街突发连环封锁',
-          triggerContext: '黑石城巡检司二把手秘密接获密报，全城提前一刻钟下铁锁封街',
-          suggestedIncident: '听雨居正门被铁卫重重拍击，门板被贴上红封条，店内所有人瞬间沦为嫌犯，互信彻底瓦解。',
-          affectedEntities: ['裴子期', '罗无忌', '严素娘'],
-          dramaturgyEffect: 'escalation'
-        },
-        {
-          id: 'twist_fallback_2',
-          title: '暗渠渗水·青溟石寒气在客栈地窖外泄',
-          triggerContext: '客栈老地窖暗渠承重木柱朽裂，商号私藏的生矿遭遇积水催化',
-          suggestedIncident: '大堂老炭炉的火焰瞬间被吸成幽蓝霜雾，堂倌指尖被冻成青紫，严素娘的暗桩身份险些彻底暴露。',
-          affectedEntities: ['严素娘', '裴子期'],
-          dramaturgyEffect: 'obstacle'
-        },
-        {
-          id: 'twist_fallback_3',
-          title: '拾荒盲叟的竹杖铜铃在后巷失落',
-          triggerContext: '何老蔫在鬼市水渠翻找时被暗哨惊动，仓皇逃入客栈后柴房',
-          suggestedIncident: '何老蔫误打误撞将铜箱钥匙掉落在炭筐里，被烤火的裴子期靴尖无意踢中。',
-          affectedEntities: ['何老蔫', '裴子期'],
-          dramaturgyEffect: 'revelation'
-        }
-      ];
-    }
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw.replace(/^\s*```(?:json)?\s*|\s*```\s*$/gi, '').trim()); }
+    catch { throw new Error('剧情提案 JSON 格式无效，请重试。'); }
+    if (!Array.isArray(parsed) || !parsed.length || parsed.length > 10 || parsed.some(item =>
+      !item || typeof item !== 'object' || ['title', 'triggerContext', 'suggestedIncident'].some(key => typeof item[key] !== 'string' || !item[key].trim())
+      || !Array.isArray(item.affectedEntities) || item.affectedEntities.some((x: unknown) => typeof x !== 'string')
+      || !['escalation', 'revelation', 'obstacle', 'downtime'].includes(item.dramaturgyEffect))) throw new Error('剧情提案字段格式不完整，请重试。');
+    return parsed.map((item, index) => ({ ...item, id: 'twist_' + index })) as ChaosTwistPrompt[];
   }
 }

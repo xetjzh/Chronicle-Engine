@@ -1,0 +1,461 @@
+{
+  "testedCommit": "df5eebca99f9eb9ebb96ae341653bb49d932e551",
+  "testedAt": "2026-11-08T13:33:47.702Z",
+  "method": "real TS/TSX handlers and services; synthetic projects; mocked AI and storage boundaries; no browser interaction",
+  "results": [
+    {
+      "id": "F01",
+      "name": "人物先于地点创建后无法通过人物页分配地点",
+      "status": "reproduced",
+      "evidence": {
+        "assignedLocation": "loc_tavern",
+        "availableLocations": [
+          "station"
+        ],
+        "locationSelectors": 0,
+        "eventsAfterStep": 0
+      }
+    },
+    {
+      "id": "F02",
+      "name": "空白书势力页只有展示，没有创建或编辑入口",
+      "status": "reproduced",
+      "evidence": {
+        "factions": 0,
+        "onlyButtons": [
+          "世界法则 (0)",
+          "地理与地点 (0)",
+          "势力与阵营 (0)",
+          "伏笔追踪 (0)"
+        ]
+      }
+    },
+    {
+      "id": "F03",
+      "name": "手动人物和地点实际默认值仍写入旧示例世界",
+      "status": "reproduced",
+      "evidence": {
+        "goal": "在寒江关打听兄长消息",
+        "title": "流浪刀客",
+        "location": {
+          "id": "loc_1794144827193",
+          "name": "月球基地",
+          "type": "city",
+          "description": "北关未知据点",
+          "connectedLocationIds": [],
+          "climateOrDanger": "风雪严寒"
+        }
+      }
+    },
+    {
+      "id": "F04",
+      "name": "删除地点不处理人物位置与其他地点的连接",
+      "status": "reproduced",
+      "evidence": {
+        "remainingLocations": [
+          "B"
+        ],
+        "danglingCharacterLocation": "A",
+        "danglingConnection": [
+          "A"
+        ]
+      }
+    },
+    {
+      "id": "F05",
+      "name": "选中文本后续写会替换选中文字",
+      "status": "reproduced",
+      "evidence": {
+        "original": "开头。选中的原文。结尾。",
+        "result": "开头。新增续写结尾。"
+      }
+    },
+    {
+      "id": "F06",
+      "name": "资料上传结束覆盖期间的新正文",
+      "status": "reproduced",
+      "evidence": {
+        "beforeCompletion": "上传期间刚写的新正文",
+        "afterCompletion": "原始正文"
+      }
+    },
+    {
+      "id": "F07",
+      "name": "AI人物生成旧回调覆盖更新后的作品",
+      "status": "reproduced",
+      "evidence": {
+        "newerContent": "AI等待期间的新正文",
+        "committedContent": "原始正文"
+      }
+    },
+    {
+      "id": "F08",
+      "name": "标准压缩EPUB导入后没有解出正文",
+      "status": "reproduced",
+      "evidence": {
+        "validZipSignature": "504b0304",
+        "originalTextPresent": false,
+        "decodedPrefix": "PK\u0003\u0004\u0014\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000oa�,\u0014\u0000\u0000\u0000\u0014\u0000\u0000\u0000\b\u0000\u0000\u0000mimetypeapplication/epub+zipPK",
+        "format": "epub"
+      }
+    },
+    {
+      "id": "F09",
+      "name": "常见中文带标题章节与Markdown标题不能正确分章",
+      "status": "reproduced",
+      "evidence": {
+        "chineseChapterCount": 1,
+        "markdownChapterCount": 1,
+        "markdownFormat": "txt"
+      }
+    },
+    {
+      "id": "F10",
+      "name": "PDF记录只保存临时blobURL，备份不包含原文件",
+      "status": "reproduced",
+      "evidence": {
+        "persistedFields": [
+          "id",
+          "fileName",
+          "format",
+          "title",
+          "sizeBytes",
+          "fileBlobUrl",
+          "parsedChapters",
+          "importedAt"
+        ],
+        "fileBytesIncluded": false,
+        "parsedTextIsPlaceholder": true
+      }
+    },
+    {
+      "id": "F11",
+      "name": "剧情灵感在AI失败时返回旧作品提案且不报告失败",
+      "status": "reproduced",
+      "evidence": {
+        "rejected": false,
+        "firstTitle": "严霜骤降·宵禁长街突发连环封锁",
+        "firstIncident": "听雨居正门被铁卫重重拍击，门板被贴上红封条，店内所有人瞬间沦为嫌犯，互信彻底瓦解。"
+      }
+    },
+    {
+      "id": "F12",
+      "name": "剧情灵感不校验元素结构，合法JSON数组可令渲染抛错",
+      "status": "reproduced",
+      "evidence": {
+        "modelResponse": "[{\"title\":\"提案\"}]",
+        "renderError": "affectedEntities.join on undefined"
+      }
+    },
+    {
+      "id": "F13",
+      "name": "单章生成没有读取前章正文、提炼摘要及人物已知秘密",
+      "status": "reproduced",
+      "evidence": {
+        "aiRequests": 5,
+        "previousTextIncluded": false,
+        "extractionIncluded": false,
+        "characterKnownFactIncluded": false
+      }
+    },
+    {
+      "id": "F14",
+      "name": "共写建议不包含书籍简介、正文及世界硬规则",
+      "status": "reproduced",
+      "evidence": {
+        "synopsisIncluded": false,
+        "rulesIncluded": false,
+        "manuscriptIncluded": false
+      }
+    },
+    {
+      "id": "F15",
+      "name": "因果审计将死者生前的历史参与记录判为错误",
+      "status": "reproduced",
+      "evidence": {
+        "historicalEventStep": 1,
+        "currentStep": 10,
+        "issues": [
+          {
+            "title": "已故角色仍然产生事件",
+            "suggestedFix": "将相关事件的参与者移除或恢复角色生存状态。"
+          }
+        ]
+      }
+    },
+    {
+      "id": "F16",
+      "name": "世界快照回滚不还原地点且留下失效章节事件引用",
+      "status": "reproduced",
+      "evidence": {
+        "restoredCharacterLocation": "old",
+        "worldLocations": [
+          "new"
+        ],
+        "events": 0,
+        "danglingChapterEvent": "future"
+      }
+    },
+    {
+      "id": "F17",
+      "name": "同地点三人时第三人永远不行动也不恢复健康",
+      "status": "reproduced",
+      "evidence": {
+        "steps": 5,
+        "eventParticipants": [
+          [
+            "a",
+            "b"
+          ],
+          [
+            "a",
+            "b"
+          ],
+          [
+            "a",
+            "b"
+          ],
+          [
+            "a",
+            "b"
+          ],
+          [
+            "a",
+            "b"
+          ]
+        ],
+        "thirdCharacter": {
+          "health": 50,
+          "knownFacts": 0
+        }
+      }
+    },
+    {
+      "id": "F18",
+      "name": "人物健康可越界，AI返回0会被默认值替换",
+      "status": "reproduced",
+      "evidence": {
+        "manualHealth": -999,
+        "aiZerosBecame": {
+          "health": 90,
+          "wealth": 20,
+          "age": 30
+        }
+      }
+    },
+    {
+      "id": "F19",
+      "name": "备份校验接受重复章节ID、非法状态和失效引用",
+      "status": "reproduced",
+      "evidence": {
+        "duplicateIds": [
+          "same",
+          "same"
+        ],
+        "acceptedStatus": "INVALID_STATUS",
+        "acceptedChapterNumber": -10,
+        "danglingLocation": "missing"
+      }
+    },
+    {
+      "id": "F20",
+      "name": "部分AI工具强制温度且忽略开启的作者附注",
+      "status": "reproduced",
+      "evidence": {
+        "configuredTemperature": 0.13,
+        "toolOverride": 0.7,
+        "enabledNoteForwarded": false
+      }
+    },
+    {
+      "id": "F21",
+      "name": "修改正文后旧提炼摘要和叙事张力继续保留",
+      "status": "reproduced",
+      "evidence": {
+        "newContent": "彻底重写后的另一个故事",
+        "staleSummary": "旧内容摘要",
+        "staleTension": 99,
+        "retainedStatus": "final"
+      }
+    },
+    {
+      "id": "F22",
+      "name": "流水线停止只丢弃结果，没有传递取消信号",
+      "status": "reproduced",
+      "evidence": {
+        "signalPassed": false,
+        "message": "当前请求结束后将丢弃结果",
+        "resultDiscarded": true
+      }
+    },
+    {
+      "id": "F23",
+      "name": "资料AI考据切换文献后将旧答案显示在新文献中",
+      "status": "reproduced",
+      "evidence": {
+        "selectedDocument": "资料乙",
+        "displayedAnswer": "这是只属于资料甲的答案"
+      }
+    },
+    {
+      "id": "F24",
+      "name": "批量TXT导入的毫秒ID可能重复",
+      "status": "reproduced",
+      "evidence": {
+        "imported": 50,
+        "uniqueIds": 1,
+        "duplicates": 49
+      }
+    },
+    {
+      "id": "F25",
+      "name": "内置部署帮助仍提供不存在的Python/PostgreSQL后端",
+      "status": "reproduced",
+      "evidence": {
+        "uiBackendImage": "python:3.12-slim",
+        "actualBackend": "Node backend/server.js",
+        "uiDatabase": "PostgreSQL",
+        "actualProjectStore": "browser IndexedDB/localStorage"
+      }
+    },
+    {
+      "id": "F26",
+      "name": "新书世界名与文风缺少配置入口且生成篇幅目标固定4000",
+      "status": "reproduced",
+      "evidence": {
+        "configuredChapterTarget": 200,
+        "act1Target": "1000~1200",
+        "requestsIncludingExtension": 6,
+        "blankWorldName": "",
+        "worldPageInitialInputValues": [
+          "",
+          ""
+        ]
+      }
+    },
+    {
+      "id": "F27",
+      "name": "每日写作进度没有按日期重置",
+      "status": "reproduced",
+      "evidence": {
+        "storedWordCount": 5000,
+        "nextDayNewCharacters": 4,
+        "displayedCounter": 5004,
+        "dateFieldExists": false
+      }
+    },
+    {
+      "id": "F28",
+      "name": "AI人物字段未校验，可写入无法再次还原的作品",
+      "status": "reproduced",
+      "evidence": {
+        "committedAgeType": "string",
+        "committedInventoryElementType": "object",
+        "reopeningValidation": "rejects project.characters[0].age"
+      }
+    },
+    {
+      "id": "F29",
+      "name": "切换文献后摘录原文被归档到错误的来源",
+      "status": "reproduced",
+      "evidence": {
+        "realSource": "资料甲/甲章",
+        "savedSource": "资料乙/乙章",
+        "selectedText": "甲的独有摘录"
+      }
+    },
+    {
+      "id": "F30",
+      "name": "纯享写作的对照素材仅显示文献第一章，PDF也只显示占位说明",
+      "status": "reproduced",
+      "evidence": {
+        "chapterSelectorCount": 0,
+        "secondChapterReachable": false,
+        "pdfViewerCount": 0
+      }
+    },
+    {
+      "id": "P01",
+      "name": "空白书创建与备份结构有效，不继承旧正文",
+      "status": "verified",
+      "evidence": {
+        "title": "月球考古",
+        "chapters": 0,
+        "characters": 0
+      }
+    },
+    {
+      "id": "P02",
+      "name": "纯享写作新建输入和偏好更新",
+      "status": "verified",
+      "evidence": {
+        "chapters": 1,
+        "wordCount": 10,
+        "fontSize": 19
+      }
+    },
+    {
+      "id": "P03",
+      "name": "阅读器章节翻页、主题和字号处理函数",
+      "status": "verified",
+      "evidence": {
+        "navigation": "first -> second",
+        "theme": "light",
+        "fontSize": 20
+      }
+    },
+    {
+      "id": "P04",
+      "name": "世界书常驻、开关、主次关键词与排序",
+      "status": "verified",
+      "evidence": {
+        "primarySecondary": "both required",
+        "disabledExcluded": true,
+        "ordering": [
+          "constant",
+          "e"
+        ]
+      }
+    },
+    {
+      "id": "P05",
+      "name": "世界法则添加、伏笔录入与回收切换",
+      "status": "verified",
+      "evidence": {
+        "ruleCount": 1,
+        "clueResolved": true
+      }
+    },
+    {
+      "id": "P06",
+      "name": "模拟单人休息与双人财富转移确实修改状态",
+      "status": "verified",
+      "evidence": {
+        "restHealth": 60,
+        "socialWealth": [
+          8,
+          12
+        ],
+        "timeAdvanced": "第1日 寅时"
+      }
+    },
+    {
+      "id": "P07",
+      "name": "同一世界内简单快照可恢复时钟和人物",
+      "status": "verified",
+      "evidence": {
+        "timeStep": 0,
+        "health": 50
+      }
+    },
+    {
+      "id": "P08",
+      "name": "叙事分析缺失评分留空，已有评分计算平均值",
+      "status": "verified",
+      "evidence": {
+        "scoredChapters": 1,
+        "averageTension": 80
+      }
+    }
+  ]
+}

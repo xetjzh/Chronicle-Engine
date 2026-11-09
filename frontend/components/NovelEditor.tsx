@@ -6,10 +6,10 @@ import { storageService } from '../services/storageService';
 import { RecursiveSummaryEngine } from '../services/recursiveSummaryEngine';
 import { ChaosOracleModal } from './ChaosOracleModal';
 import { applyNovelChapterPatch, captureNovelChapter, runNovelBatch } from './novelAsync';
-import { createWritingChapter } from './writingWorkspace';
+import { updateWritingContent, invalidateChapterAnalysis, createWritingChapter } from './writingWorkspace';
 import { AIConfigSummary } from './AIConfigSummary';
-import { 
-  BookOpen, Feather, Sparkles, CheckCircle2, RotateCcw, 
+import {
+  BookOpen, Feather, Sparkles, CheckCircle2, RotateCcw,
   Download, Plus, Edit3, MessageSquare, AlertTriangle, Layers,
   Cpu, Server, RefreshCw, BookMarked, Sliders, Check, FastForward,
   Play, Pause, Award, Activity, ChevronLeft, ChevronRight, Hash,
@@ -57,8 +57,8 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
   });
 
   const [userConstraint, setUserConstraint] = useState(
-    selectedEventForChapter && selectedEventForChapter.length > 0 
-      ? `围绕事件【${selectedEventForChapter[0].title}】深入展开，要求环境描写与心理博弈兼备，字数坚决不少于4000字。` 
+    selectedEventForChapter && selectedEventForChapter.length > 0
+      ? `围绕事件【${selectedEventForChapter[0].title}】深入展开，要求环境描写与心理博弈兼备，目标篇幅约 ${project.settings.chapterLengthTarget} 字。`
       : ''
   );
   const [povCharId, setPovCharId] = useState<string>(project.characters[0]?.id || '');
@@ -70,7 +70,8 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
   const latestCallbackRef = useRef(onUpdateProject);
   const mountedRef = useRef(true);
   const activeAIRef = useRef({ generation: false, extraction: false, suggestions: false });
-  const batchRunRef = useRef<{ cancelled: boolean; projectId: string } | null>(null);
+  const batchRunRef = useRef<{ cancelled: boolean; projectId: string; controller: AbortController } | null>(null);
+  const controllers = useRef<Partial<Record<'generation' | 'extraction' | 'suggestions', AbortController>>>({});
   latestProjectRef.current = project;
   latestCallbackRef.current = onUpdateProject;
 
@@ -78,7 +79,8 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      if (batchRunRef.current) batchRunRef.current.cancelled = true;
+      if (batchRunRef.current) { batchRunRef.current.cancelled = true; batchRunRef.current.controller.abort(); }
+      Object.values(controllers.current).forEach(c => c?.abort());
     };
   }, []);
 
@@ -106,17 +108,13 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
 
   const handleUpdateChapterContent = (content: string) => {
     if (!currentChapter) return;
-    const updatedChapters = project.chapters.map(ch => 
-      ch.id === currentChapter.id ? { ...ch, content, wordCount: content.length, updatedAt: new Date().toLocaleString() } : ch
-    );
-    const updated = { ...project, chapters: updatedChapters };
-    commitProject(updated);
+    commitProject(updateWritingContent(latestProjectRef.current, currentChapter.id, content, new Date().toISOString()));
   };
 
   const handleUpdateChapterOutline = (outline: string) => {
     if (!currentChapter) return;
-    const updatedChapters = project.chapters.map(ch => 
-      ch.id === currentChapter.id ? { ...ch, outline } : ch
+    const updatedChapters = project.chapters.map(ch =>
+      ch.id === currentChapter.id ? { ...invalidateChapterAnalysis(ch), outline, updatedAt: new Date().toISOString() } : ch
     );
     const updated = { ...project, chapters: updatedChapters };
     commitProject(updated);
@@ -137,12 +135,13 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
     const chapter = source.chapters.find(item => item.id === currentChapterIdRef.current);
     if (!chapter || activeAIRef.current.extraction || activeAIRef.current.generation || batchRunRef.current) return;
     const snapshot = captureNovelChapter(source, chapter.id);
+    const controller = new AbortController(); controllers.current.extraction = controller;
     activeAIRef.current.extraction = true;
     setIsCompressingExtraction(true);
     setOperationNotice(null);
     try {
-      const extraction = await RecursiveSummaryEngine.extractAndCompressChapter(source, chapter);
-      if (!mountedRef.current) return;
+      const extraction = await RecursiveSummaryEngine.extractAndCompressChapter(source, chapter, controller.signal);
+      if (!mountedRef.current || controller.signal.aborted) return;
       const updated = applyNovelChapterPatch(latestProjectRef.current, snapshot, { extraction, tensionScore: extraction.tensionScore });
       const details = JSON.stringify(extraction, null, 2);
       if (!updated || currentChapterIdRef.current !== chapter.id) {
@@ -154,6 +153,7 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
     } catch (error) {
       if (mountedRef.current) setOperationNotice({ message: `摘要提取失败：${error instanceof Error ? error.message : '请稍后重试'}`, error: true });
     } finally {
+      delete controllers.current.extraction;
       activeAIRef.current.extraction = false;
       if (mountedRef.current) setIsCompressingExtraction(false);
     }
@@ -165,18 +165,20 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
     const chapter = source.chapters.find(item => item.id === currentChapterIdRef.current);
     if (!chapter || activeAIRef.current.generation || activeAIRef.current.extraction || batchRunRef.current) return;
     const snapshot = captureNovelChapter(source, chapter.id);
+    const controller = new AbortController(); controllers.current.generation = controller;
     activeAIRef.current.generation = true;
     setIsGenerating(true);
     setOperationNotice(null);
     setCurrentActWords(0);
     setGenerationActStatus('正在构建因果与四幕大纲...');
     try {
-      const targetEvents = selectedEventForChapter && selectedEventForChapter.length > 0 
-        ? selectedEventForChapter 
+      const targetEvents = selectedEventForChapter && selectedEventForChapter.length > 0
+        ? selectedEventForChapter
         : source.events.slice(-3);
 
       const result = await GeminiService.generateChapter({
         project: source,
+        signal: controller.signal,
         volumeNumber: chapter.volumeNumber,
         chapterNumber: chapter.chapterNumber,
         povCharacterId: povCharId,
@@ -189,7 +191,7 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
         },
       });
 
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || controller.signal.aborted) return;
       const updated = applyNovelChapterPatch(latestProjectRef.current, snapshot, {
           title: result.title,
           outline: result.outline,
@@ -210,6 +212,7 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
     } catch (error) {
       if (mountedRef.current) setOperationNotice({ message: `章节生成失败：${error instanceof Error ? error.message : '请检查模型设置后重试'}`, error: true });
     } finally {
+      delete controllers.current.generation;
       activeAIRef.current.generation = false;
       if (mountedRef.current) {
         setIsGenerating(false);
@@ -222,7 +225,7 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
   const handleStartBatchPipeline = async (batchCount: number) => {
     if (!hasStorySeed) { setOperationNotice({ message: '请先填写作品简介或作者指令，再启动批量创作。', error: true }); return; }
     if (batchRunRef.current || activeAIRef.current.generation || activeAIRef.current.extraction) return;
-    const run = { cancelled: false, projectId: latestProjectRef.current.id };
+    const run = { cancelled: false, projectId: latestProjectRef.current.id, controller: new AbortController() };
     batchRunRef.current = run;
     const isCancelled = () => run.cancelled || !mountedRef.current || latestProjectRef.current.id !== run.projectId;
     setOperationNotice(null);
@@ -240,7 +243,7 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
         const nextVol = Math.ceil(nextNum / 100);
         const characterId = source.characters.length > 0 ? source.characters[index % source.characters.length].id : undefined;
         const result = await GeminiService.generateChapter({
-          project: steppedProject, volumeNumber: nextVol, chapterNumber: nextNum, povCharacterId: characterId,
+          signal: run.controller.signal, project: steppedProject, volumeNumber: nextVol, chapterNumber: nextNum, povCharacterId: characterId,
           events: newEvents.length > 0 ? newEvents : steppedProject.events.slice(-3),
           userConstraint: [userConstraint, source.chapters[source.chapters.length - 1]?.outline,
             source.chapters[source.chapters.length - 1]?.content ? `承接已写正文：${source.chapters[source.chapters.length - 1].content.slice(-1200)}` : '',
@@ -294,33 +297,37 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
 
   const handleStopBatchPipeline = () => {
     if (!batchRunRef.current) return;
-    batchRunRef.current.cancelled = true;
+    batchRunRef.current.cancelled = true; batchRunRef.current.controller.abort();
     setBatchPipeline(previous => ({
-      ...previous, isPaused: true, currentStepDescription: '正在停止，当前请求结束后将丢弃结果。',
+      ...previous, isPaused: true, currentStepDescription: '正在取消当前 AI 请求，后续章节不会启动。',
     }));
   };
   const handleGetSuggestions = async () => {
     if (activeAIRef.current.suggestions) return;
     const source = latestProjectRef.current;
+    const controller = new AbortController(); controllers.current.suggestions = controller;
     activeAIRef.current.suggestions = true;
     setIsAskingSuggestion(true);
     try {
-      const suggestions = await GeminiService.coWriteSuggestions(source, userConstraint || '请给出符合当前人物心境的发展推演');
-      if (mountedRef.current && latestProjectRef.current.id === source.id) setAiSuggestions(suggestions);
+      const suggestions = await GeminiService.coWriteSuggestions(source, userConstraint || '请给出符合当前人物心境的发展推演', controller.signal);
+      if (mountedRef.current && !controller.signal.aborted && latestProjectRef.current.id === source.id) setAiSuggestions(suggestions);
     } catch (error) {
       if (mountedRef.current) setOperationNotice({ message: `构思请求失败：${error instanceof Error ? error.message : '请稍后重试'}`, error: true });
     } finally {
+      delete controllers.current.suggestions;
       activeAIRef.current.suggestions = false;
       if (mountedRef.current) setIsAskingSuggestion(false);
     }
   };
 
+  const chapterTarget = project.settings.chapterLengthTarget;
   const totalWords = project.chapters.reduce((acc, c) => acc + c.wordCount, 0);
   const avgWords = project.chapters.length > 0 ? Math.round(totalWords / project.chapters.length) : 0;
   const hasStorySeed = !!project.authorNote.trim() || !!userConstraint.trim() || project.events.length > 0 || project.chapters.some(chapter => chapter.content.trim() || chapter.outline.trim());
 
   return (
     <div className="space-y-6">
+      {(isGenerating || isCompressingExtraction || isAskingSuggestion) && <button onClick={() => { Object.values(controllers.current).forEach(c => c?.abort()); setOperationNotice({ message: '已请求停止当前 AI 任务。' }); }} className="rounded border border-amber-700 px-3 py-2 text-xs text-amber-200">停止当前 AI 任务</button>}
       <AIConfigSummary config={project.aiConfig} running={isGenerating || batchPipeline.isRunning || isCompressingExtraction} onEdit={onOpenAISettings} />
       <section className="rounded-xl border border-slate-800 bg-slate-900 p-4 text-xs text-slate-300"><div className="flex flex-wrap gap-2"><button disabled={batchPipeline.isRunning || isGenerating || isCompressingExtraction} aria-pressed={pipelineMode === 'AUTO_NOVEL'} onClick={() => onPipelineModeChange('AUTO_NOVEL')} className="rounded-lg border border-purple-800 px-3 py-2 aria-pressed:bg-purple-800">模式 A · 自动成书</button><button disabled={batchPipeline.isRunning || isGenerating || isCompressingExtraction} aria-pressed={pipelineMode === 'CO_WRITING'} onClick={() => onPipelineModeChange('CO_WRITING')} className="rounded-lg border border-purple-800 px-3 py-2 aria-pressed:bg-purple-800">模式 B · 人机共写</button></div><p className="mt-3 leading-6">{pipelineMode === 'AUTO_NOVEL' ? '按你选择的章数，逐章推进规则事件、生成四幕正文并保留草稿。只有点击批量启动才会调用 AI，离开本页会停止后续章节。' : '由你新建章节、填写要求和编辑原稿；AI 只在你点击起草或建议时运行，结果由你审阅。纯享写作也支持手写、润色与续写。'}</p>{!hasStorySeed && <p role="status" className="mt-2 text-amber-200">这是空白作品。可以先新建章节手写，或在作品书架填写简介、本页填写作者指令后再使用 AI。</p>}</section>
       {/* 3000 Chapters & Word Count Production Dashboard */}
@@ -331,12 +338,12 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
               <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-900/60 text-purple-300 border border-purple-700/50">
                 长篇创作计划
               </span>
-              <span className="text-xs text-slate-400">四幕章节目标约 4,000 字，实际以生成结果为准</span>
+              <span className="text-xs text-slate-400">四幕章节目标约 {chapterTarget.toLocaleString()} 字，实际以生成结果为准</span>
             </div>
             <div className="flex flex-wrap items-center gap-4 text-sm mt-1">
                 <div>已撰写: <span className="text-xl font-bold font-mono text-white">{project.chapters.length}</span> <span className="text-slate-400 text-xs">章</span></div>
               <div>累计产出: <span className="text-xl font-bold font-mono text-purple-300">{(totalWords / 10000).toFixed(2)}</span> <span className="text-slate-400 text-xs">万字</span></div>
-              <div>均章篇幅: <span className={`text-sm font-bold font-mono ${avgWords >= 4000 ? 'text-green-400' : 'text-amber-400'}`}>{avgWords}</span> <span className="text-slate-400 text-xs">字/章</span></div>
+              <div>均章篇幅: <span className={`text-sm font-bold font-mono ${avgWords >= chapterTarget ? 'text-green-400' : 'text-amber-400'}`}>{avgWords}</span> <span className="text-slate-400 text-xs">字/章</span></div>
             </div>
           </div>
 
@@ -354,10 +361,10 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
               onClick={() => handleStartBatchPipeline(3)}
               disabled={batchPipeline.isRunning || isGenerating || isCompressingExtraction || !hasStorySeed}
               className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition flex items-center gap-1.5 disabled:opacity-50"
-              title="自动模拟时间并连续创作 3 篇 4000+ 字完整大章"
+              title={`自动模拟时间并连续创作 3 章，每章目标 ${chapterTarget} 字`}
             >
               <FastForward className="w-3.5 h-3.5 text-purple-400" />
-              连跑 3 章 (约1.2万字)
+              连跑 3 章 (约{(chapterTarget * 3 / 10000).toFixed(1)}万字)
             </button>
             <button
               onClick={() => handleStartBatchPipeline(10)}
@@ -366,7 +373,7 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
               title="自动模拟演进并连续创作 10 篇大章"
             >
               <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
-              批量连跑 10 章 (4万+字)
+              批量连跑 10 章 (约{(chapterTarget / 1000).toFixed(1)}万字)
             </button></>}
             <button
               onClick={() => storageService.exportChaptersAsMarkdown(project)}
@@ -464,7 +471,7 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
             <div className="space-y-1.5 max-h-[480px] overflow-y-auto pr-1">
               {filteredChapters.map(ch => {
                 const isSelected = ch.id === currentChapter?.id;
-                const meetsStandard = ch.wordCount >= 4000;
+                const meetsStandard = ch.wordCount >= chapterTarget;
                 return (
                   <button
                     type="button"
@@ -472,8 +479,8 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
                     onClick={() => setActiveChapterId(ch.id)}
                     aria-pressed={isSelected}
                     className={`block w-full text-left p-2.5 rounded-lg border text-xs cursor-pointer transition ${
-                      isSelected 
-                        ? 'bg-purple-950/40 border-purple-500 text-white' 
+                      isSelected
+                        ? 'bg-purple-950/40 border-purple-500 text-white'
                         : 'bg-slate-800/40 border-slate-800/80 text-slate-300 hover:border-slate-700'
                     }`}
                   >
@@ -496,7 +503,7 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
             <div className="flex items-center justify-between">
               <h4 className="font-semibold text-slate-200 flex items-center gap-1.5">
                 <Feather className="w-4 h-4 text-purple-400" />
-                四幕接力扩写 (保底4000+字)
+                四幕接力扩写 (目标 {chapterTarget} 字)
               </h4>
               <button
                 onClick={onOpenAISettings}
@@ -549,7 +556,7 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
                 className="py-2 bg-purple-600 hover:bg-purple-500 text-white font-semibold rounded-lg transition flex items-center justify-center gap-1 shadow"
               >
                 <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
-                {isGenerating ? '四幕执笔中...' : '起草 4000+ 字大章'}
+                {isGenerating ? '四幕执笔中...' : `起草约 ${chapterTarget} 字章节`}
               </button>
             </div>
 
@@ -578,7 +585,7 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
                     type="text"
                     value={currentChapter.title}
                     onChange={e => {
-                      const updatedChapters = project.chapters.map(ch => 
+                      const updatedChapters = project.chapters.map(ch =>
                         ch.id === currentChapter.id ? { ...ch, title: e.target.value } : ch
                       );
                       commitProject({ ...project, chapters: updatedChapters });
@@ -587,9 +594,9 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
                   />
                   <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400 mt-1">
                     <span className={`font-mono font-semibold ${
-                      currentChapter.wordCount >= 4000 ? 'text-green-400' : 'text-amber-400'
+                      currentChapter.wordCount >= chapterTarget ? 'text-green-400' : 'text-amber-400'
                     }`}>
-                      本章字数：{currentChapter.wordCount} 字 {currentChapter.wordCount >= 4000 ? '(已达标 4000+)' : '(未达4000字标称)'}
+                      本章字数：{currentChapter.wordCount} 字 {currentChapter.wordCount >= chapterTarget ? '(达到目标)' : `(目标 ${chapterTarget} 字)`}
                     </span>
                     <span>所属卷：第 {currentChapter.volumeNumber} 卷</span>
                     <span>更新时间：{currentChapter.updatedAt}</span>
@@ -609,7 +616,7 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
 
                   <button
                     onClick={() => {
-                      const updatedChapters = project.chapters.map(ch => 
+                      const updatedChapters = project.chapters.map(ch =>
                         ch.id === currentChapter.id ? { ...ch, status: 'final' as const } : ch
                       );
                       const updated = { ...project, chapters: updatedChapters };
@@ -644,7 +651,7 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
                   rows={24}
                   value={currentChapter.content}
                   onChange={e => handleUpdateChapterContent(e.target.value)}
-                  placeholder="在此处输入小说章节正文 (单章建议 >= 4000 字)..."
+                  placeholder={`在此处输入小说章节正文，本章目标约 ${chapterTarget} 字…`}
                   className="w-full bg-slate-950/40 border border-slate-800 rounded-xl p-5 text-slate-100 font-serif leading-loose text-base outline-none focus:border-purple-500/60 transition resize-y"
                 />
               </div>
