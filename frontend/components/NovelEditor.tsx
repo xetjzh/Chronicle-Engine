@@ -2,6 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { ProjectData, Chapter, WorldEvent, BatchPipelineStatus } from '../types';
 import { GeminiService } from '../services/geminiService';
 import { SimulationEngine } from '../services/simulationEngine';
+import { ChapterExpansionEngine } from '../services/chapterExpansionEngine';
 import { storageService } from '../services/storageService';
 import { RecursiveSummaryEngine } from '../services/recursiveSummaryEngine';
 import { ChaosOracleModal } from './ChaosOracleModal';
@@ -39,6 +40,7 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
   const [currentActWords, setCurrentActWords] = useState<number>(0);
   const [isCompressingExtraction, setIsCompressingExtraction] = useState(false);
   const [showChaosOracle, setShowChaosOracle] = useState(false);
+  const [regeneratingActIndex, setRegeneratingActIndex] = useState<number | null>(null);
 
   // Pagination for managing 3000+ chapters (pages of 50 chapters)
   const [selectedVolumeFilter, setSelectedVolumeFilter] = useState<number>(Math.max(1, Math.ceil((project.chapters[0]?.chapterNumber || 1) / 50)));
@@ -218,6 +220,53 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
         setIsGenerating(false);
         setGenerationActStatus(null);
       }
+    }
+  };
+
+  const handleRegenerateSingleAct = async (actIndex: number) => {
+    if (!currentChapter || !currentChapter.actBeats || regeneratingActIndex !== null || isGenerating) return;
+    const targetBeat = currentChapter.actBeats.find(b => b.actIndex === actIndex);
+    if (!targetBeat) return;
+    const snapshot = captureNovelChapter(latestProjectRef.current, currentChapter.id);
+    if (!snapshot) return;
+    setRegeneratingActIndex(actIndex);
+    setOperationNotice(null);
+    const controller = new AbortController();
+    controllers.current.generation = controller;
+    try {
+      const result = await ChapterExpansionEngine.regenerateSingleAct({
+        project: latestProjectRef.current,
+        chapterNumber: currentChapter.chapterNumber,
+        actIndex,
+        chapterTitle: currentChapter.title,
+        actTask: targetBeat.outline,
+        existingBeats: currentChapter.actBeats,
+        povCharacterId: povCharId,
+        events: targetEvents,
+        userConstraint,
+        targetWordCount: chapterTarget,
+        signal: controller.signal,
+      });
+      const updated = applyNovelChapterPatch(latestProjectRef.current, snapshot, {
+        content: result.fullContent,
+        wordCount: result.fullContent.length,
+        actBeats: result.beats,
+        updatedAt: new Date().toLocaleString(),
+      });
+      if (updated) {
+        commitProject(updated);
+        setOperationNotice({ message: `第 ${actIndex} 幕已重新润色完稿并更新正文。` });
+      }
+    } catch (error) {
+      if (mountedRef.current) {
+        setOperationNotice({
+          message: `重新撰写第 ${actIndex} 幕失败：${error instanceof Error ? error.message : '请重试'}`,
+          error: true,
+        });
+      }
+    } finally {
+      delete controllers.current.generation;
+      if (mountedRef.current) setRegeneratingActIndex(null);
     }
   };
 
@@ -522,12 +571,28 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
                 onChange={e => setPovCharId(e.target.value)}
                 className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 outline-none focus:border-purple-500"
               >
-                {project.characters.map(c => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} — {c.title} ({c.currentMood})
-                  </option>
-                ))}
+                {project.characters.map(c => {
+                  const locName = project.locations.find(l => l.id === c.currentLocationId)?.name || '未定地点';
+                  const deadTag = !c.isAlive ? '[已故] ' : '';
+                  return (
+                    <option key={c.id} value={c.id} className={!c.isAlive ? 'text-amber-400' : ''}>
+                      {deadTag}{c.name} — {c.title || c.occupation || '人物'} (@{locName} · {c.currentMood})
+                    </option>
+                  );
+                })}
               </select>
+              {(() => {
+                const povChar = project.characters.find(c => c.id === povCharId);
+                if (povChar && !povChar.isAlive) {
+                  return (
+                    <p className="text-[11px] text-amber-400 mt-1 flex items-center gap-1">
+                      <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                      <span>提示：当前视点角色已于第 #{povChar.diedAtTimeStep ?? '？'} 时间步去世，作为第一视点可能引发认知悖论。</span>
+                    </p>
+                  );
+                }
+                return null;
+              })()}
             </div>
 
             <div>
@@ -631,11 +696,13 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
               </div>
 
               {/* Chapter Outline Section */}
-              <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800/80">
-                <label className="text-[11px] font-semibold text-slate-400 flex items-center gap-1.5 mb-1">
-                  <Layers className="w-3.5 h-3.5 text-purple-400" />
-                  本章四幕大纲规划
-                </label>
+              <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800/80 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-semibold text-slate-400 flex items-center gap-1.5">
+                    <Layers className="w-3.5 h-3.5 text-purple-400" />
+                    本章四幕大纲规划与幕次重写
+                  </label>
+                </div>
                 <input
                   type="text"
                   value={currentChapter.outline}
@@ -643,6 +710,38 @@ export const NovelEditor: React.FC<NovelEditorProps> = ({
                   placeholder="简述本章发生的关键情节转折..."
                   className="w-full bg-transparent text-xs text-slate-300 outline-none"
                 />
+                {currentChapter.actBeats && currentChapter.actBeats.length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 pt-2 border-t border-slate-800/60">
+                    {currentChapter.actBeats.map(beat => {
+                      const isActBusy = regeneratingActIndex === beat.actIndex;
+                      return (
+                        <div key={beat.actIndex} className="bg-slate-900/90 border border-slate-800 rounded p-2 text-xs flex flex-col justify-between">
+                          <div>
+                            <div className="flex items-center justify-between text-[11px] text-purple-300 font-medium mb-1">
+                              <span>{beat.actName}</span>
+                              <span className="font-mono text-[10px] text-slate-400">{beat.wordCount}字</span>
+                            </div>
+                            <p className="text-[11px] text-slate-300 line-clamp-2" title={beat.outline}>
+                              {beat.outline}
+                            </p>
+                          </div>
+                          <div className="mt-2 pt-1 border-t border-slate-800/50 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => handleRegenerateSingleAct(beat.actIndex)}
+                              disabled={regeneratingActIndex !== null || isGenerating}
+                              className="text-[10px] px-2 py-0.5 rounded bg-purple-900/40 hover:bg-purple-800/60 text-purple-200 border border-purple-700/50 flex items-center gap-1 transition"
+                              title="单幕重新生成并智能融合到正文中"
+                            >
+                              <RotateCcw className={`w-2.5 h-2.5 ${isActBusy ? 'animate-spin' : ''}`} />
+                              {isActBusy ? '重写中...' : '重写该幕'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Main Literary Textarea */}

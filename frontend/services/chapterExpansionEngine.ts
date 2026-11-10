@@ -47,4 +47,69 @@ export class ChapterExpansionEngine {
     check(); onProgress?.(6, '全章完工', content.length, `实际 ${content.length} 字；目标 ${target} 字，请审阅。`);
     return { title, outline, content, beats };
   }
+
+  /**
+   * 针对某一特定幕（起、承、转、合）单独重新生成，结合前置幕的正文衔接，保持全章连贯
+   */
+  static async regenerateSingleAct(params: {
+    project: ProjectData;
+    chapterNumber: number;
+    actIndex: number; // 1 ~ 4
+    chapterTitle: string;
+    actTask: string;
+    existingBeats: ChapterActBeat[];
+    povCharacterId?: string;
+    events: WorldEvent[];
+    userConstraint?: string;
+    targetWordCount?: number;
+    signal?: AbortSignal;
+  }): Promise<{ updatedAct: ChapterActBeat; fullContent: string; beats: ChapterActBeat[] }> {
+    const { project, chapterNumber, actIndex, chapterTitle, actTask, existingBeats, events, userConstraint, signal } = params;
+    if (signal?.aborted) throw new Error('创作已取消');
+    const target = Math.min(12000, Math.max(100, Math.round(params.targetWordCount || project.settings.chapterLengthTarget || 4000)));
+    const actTarget = Math.ceil(target / 4);
+    const context = HierarchicalMemoryService.buildRollingMemoryContext(project, chapterNumber, params.povCharacterId);
+    const pov = project.characters.find(c => c.id === params.povCharacterId) || project.characters[0];
+    const scanContexts = [...events.map(e => `${e.title} ${e.description}`), pov?.currentGoal || '', userConstraint || '', project.worldName, context];
+    const { activated } = LorebookService.scanAndActivate(project.lorebook || [], scanContexts);
+    const lorebookBlock = LorebookService.formatLorebookPrompt(activated);
+    const authorsNote = project.aiConfig.authorsNote.enabled ? project.aiConfig.authorsNote.content : undefined;
+
+    // 前置幕正文收束
+    const precedingContent = existingBeats
+      .filter(b => b.actIndex < actIndex)
+      .sort((a, b) => a.actIndex - b.actIndex)
+      .map(b => b.content)
+      .join('\n\n');
+
+    const names = ['第一幕·起', '第二幕·承', '第三幕·转', '第四幕·合'];
+    const actName = names[actIndex - 1] || `第${actIndex}幕`;
+    const eventsBrief = events.map(e => `[${e.simulationTime}] ${e.title}：${e.description}`).join('\n').slice(0, 6000) || '依据本书设定与作者要求展开。';
+
+    const prompt = `【${actName} · 定向重新推敲】\n章节：《${chapterTitle}》\n本幕任务：${actTask}\n本幕目标篇幅：约 ${actTarget} 字。\n${context}\n本章事件：${eventsBrief}\n作者补充要求：${userConstraint || '保持文风自然、情节紧凑，符合人物性格'}\n承接前置已写正文：${precedingContent.slice(-2000) || '本章起始'}\n请直接输出本幕重写的全新正文，不带前言、不带幕名。`;
+
+    const text = await AIProviderService.generateText(project.aiConfig, {
+      prompt,
+      systemInstruction: '你是一位精益求精的小说家，负责对本幕做重写与文笔精修。',
+      lorebookBlock,
+      authorsNote,
+      signal,
+    });
+    if (!text.trim()) throw new Error('单幕重新生成返回正文为空，请重试。');
+
+    const updatedAct: ChapterActBeat = {
+      actIndex,
+      actName,
+      outline: actTask,
+      content: text.trim(),
+      wordCount: text.trim().length,
+    };
+
+    const newBeats = existingBeats.some(b => b.actIndex === actIndex)
+      ? existingBeats.map(b => (b.actIndex === actIndex ? updatedAct : b))
+      : [...existingBeats, updatedAct].sort((a, b) => a.actIndex - b.actIndex);
+
+    const fullContent = newBeats.map(b => b.content).join('\n\n');
+    return { updatedAct, fullContent, beats: newBeats };
+  }
 }
