@@ -192,6 +192,9 @@ export function createRuntime(config = readConfig(), dependencies = {}) {
     if (url.pathname !== '/ws-proxy') return rejectUpgrade(socket, 404);
     if (draining || !config.aiProxyEnabled) return rejectUpgrade(socket, 503);
     if (!allowedOrigins.has(request.headers.origin)) return rejectUpgrade(socket, 403);
+    // Mirror the same public proxy-marker check as the HTTP /api-proxy gate so
+    // that both transports require identical client identification.
+    if (request.headers['x-app-proxy'] !== config.proxyMarker) return rejectUpgrade(socket, 403);
     if (url.searchParams.get('target') !== LIVE_TARGET) return rejectUpgrade(socket, 400);
     if (!upgradeAllowed(socket.remoteAddress)) return rejectUpgrade(socket, 429);
     const controller = new AbortController();

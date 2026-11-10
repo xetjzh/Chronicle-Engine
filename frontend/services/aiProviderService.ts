@@ -234,7 +234,13 @@ export class AIProviderService {
     return this.boundedRequest('Gemini', timeoutMs, options.signal, async signal => {
       const { GoogleGenAI } = await import('@google/genai');
       if (signal.aborted) throw this.canceledError();
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY, vertexai: true });
+      // SECURITY: When vertexai is true the SDK routes through the backend
+      // ADC proxy (vertex-ai-proxy-interceptor.js) and no API key is needed.
+      // Do NOT pass process.env.API_KEY here: Vite would inline the value as a
+      // plain string into the production bundle, exposing it to every visitor.
+      // If a direct Gemini API key is ever required, source it from
+      // config.gemini.apiKey (user-supplied at runtime) instead.
+      const ai = new GoogleGenAI({ vertexai: true });
       const response = await ai.models.generateContent({
         model,
         contents: {

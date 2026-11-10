@@ -254,7 +254,8 @@ test('malformed live setup closes only the connection and abnormal upstream clos
   let upstream;
   class CaptureUpstream extends FakeUpstream { constructor(...args) { super(...args); upstream = this; } }
   const runtime = await start(t, enabled(), { getAccessToken: async () => 'token', WebSocket: CaptureUpstream });
-  const connect = () => new WebSocket(runtime.url.replace('http:', 'ws:') + '/ws-proxy?target=' + encodeURIComponent(liveTarget), { origin });
+  const wsHeaders = { origin, 'x-app-proxy': marker };
+  const connect = () => new WebSocket(runtime.url.replace('http:', 'ws:') + '/ws-proxy?target=' + encodeURIComponent(liveTarget), { headers: wsHeaders });
   const ws = connect();
   await once(ws, 'open');
   ws.send('{"setup":true}');
@@ -268,7 +269,7 @@ test('malformed live setup closes only the connection and abnormal upstream clos
 
 test('shutdown bounds active HTTP and live connections and reports draining', async t => {
   const runtime = await start(t, enabled({ SHUTDOWN_TIMEOUT_MS: '100' }), { getAccessToken: async () => 'token', WebSocket: FakeUpstream });
-  const ws = new WebSocket(runtime.url.replace('http:', 'ws:') + '/ws-proxy?target=' + encodeURIComponent(liveTarget), { origin });
+  const ws = new WebSocket(runtime.url.replace('http:', 'ws:') + '/ws-proxy?target=' + encodeURIComponent(liveTarget), { headers: { origin, 'x-app-proxy': marker } });
   await once(ws, 'open');
   const closed = once(ws, 'close');
   const started = Date.now();

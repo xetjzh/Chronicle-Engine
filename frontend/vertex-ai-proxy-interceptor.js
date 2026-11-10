@@ -78,6 +78,10 @@
       if (forwardableHeaders.has(name)) headers[name] = value;
     });
     return originalFetch.call(window, '/api-proxy', {
+      // credentials is intentionally forced to 'same-origin': the proxy endpoint
+      // is on the same origin and must receive the session cookie (if any). The
+      // original request's credential mode is not forwarded because the target
+      // is now the local proxy, not the upstream AI platform.
       method: 'POST', credentials: 'same-origin', signal: request.signal,
       headers: { 'Content-Type': 'application/json', 'X-App-Proxy': publicMarker },
       body: JSON.stringify({ originalUrl: url.origin + url.pathname, method: request.method, headers, body }),
