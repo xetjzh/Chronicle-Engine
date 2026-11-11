@@ -62,6 +62,7 @@ function mount(project = makeProject(), generateText = async () => '生成正文
     if (specifier === 'react') return hooks;
     if (specifier === './Dialog') return { Dialog: 'dialog' };
     if (specifier === './PdfDocumentViewer') return { PdfDocumentViewer: 'pdf-viewer' };
+    if (specifier === './listWindow') return require('./listWindow.ts');
     if (specifier === './writingWorkspace') return require('./writingWorkspace.ts');
     if (specifier === '../services/aiProviderService') return { AIProviderService: { generateText } };
     if (specifier === '../services/soundEffects') return { soundEffects: { playKeyClick() {}, playChime() {} } };

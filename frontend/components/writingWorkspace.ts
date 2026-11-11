@@ -60,7 +60,7 @@ export function writingSettingsForDay(project: ProjectData, now: string = new Da
 }
 
 export function invalidateChapterAnalysis(chapter: Chapter): Chapter {
-  const { extraction, tensionScore, actBeats, ...rest } = chapter;
+  const { extraction, tensionScore, actBeats, generationCheckpoint, ...rest } = chapter;
   return { ...rest, status: 'draft' };
 }
 

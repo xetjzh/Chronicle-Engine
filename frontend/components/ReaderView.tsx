@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react';
+import { listWindow } from './listWindow';
 import type { ProjectData } from '../types';
 import { BookOpen, ChevronLeft, ChevronRight, Sun, Moon } from 'lucide-react';
 
@@ -12,6 +13,10 @@ const readerThemes = {
 
 export const ReaderView: React.FC<ReaderViewProps> = ({ project }) => {
   const [selectedChapterId, setSelectedChapterId] = useState(project.chapters[0]?.id || '');
+  const contentsRef = useRef<HTMLDivElement>(null);
+  const [showContents, setShowContents] = useState(false);
+  const [contentsQuery, setContentsQuery] = useState('');
+  const [contentsScroll, setContentsScroll] = useState(0);
   const [fontSize, setFontSize] = useState(18);
   const [lineHeight, setLineHeight] = useState(1.9);
   const [theme, setTheme] = useState<keyof typeof readerThemes>('dark');
@@ -19,6 +24,8 @@ export const ReaderView: React.FC<ReaderViewProps> = ({ project }) => {
   const selectedIndex = project.chapters.findIndex(chapter => chapter.id === selectedChapterId);
   const currentIndex = selectedIndex < 0 ? 0 : selectedIndex;
   const chapter = project.chapters[currentIndex];
+  const listed = project.chapters.filter(c => !contentsQuery.trim() || c.title.includes(contentsQuery.trim()) || String(c.chapterNumber) === contentsQuery.trim());
+  const range = listWindow(listed.length, contentsScroll, 280, 48);
   const colors = readerThemes[theme];
   const style = {
     '--reader-bg': colors.bg, '--reader-text': colors.text, '--reader-muted': colors.muted,
@@ -50,10 +57,12 @@ export const ReaderView: React.FC<ReaderViewProps> = ({ project }) => {
       </header>
 
       <div className="reader-chapter-picker flex flex-wrap items-center justify-between gap-3 border-b border-[var(--reader-border)] px-5 py-3 sm:px-8">
-        <label className="flex min-w-0 flex-1 items-center gap-3 text-[11px]"><span className="shrink-0 text-[var(--reader-muted)]">跳转章节</span><select value={chapter.id} onChange={event => changeChapter(event.target.value)} className="min-h-9 min-w-0 max-w-sm flex-1 rounded-lg border border-[var(--reader-border)] bg-[var(--reader-bg)] px-2 text-xs text-inherit">{project.chapters.map(item => <option key={item.id} value={item.id}>第 {item.chapterNumber} 章 · {item.title || '未命名章节'}</option>)}</select></label>
+        <button onClick={() => setShowContents(value => !value)} aria-expanded={showContents} className={controlClass}>章节目录 · 第 {chapter.chapterNumber} 章</button>
+
         <label className="flex items-center gap-2 text-[11px] text-[var(--reader-muted)]">行间距<select value={lineHeight} onChange={event => setLineHeight(Number(event.target.value))} className="min-h-9 rounded-lg border border-[var(--reader-border)] bg-[var(--reader-bg)] px-2 text-xs text-[var(--reader-text)]"><option value={1.6}>紧凑</option><option value={1.9}>舒适</option><option value={2.2}>宽松</option></select></label>
       </div>
 
+      {showContents && <section aria-label="阅读章节目录" className="border-b border-[var(--reader-border)] p-3"><input aria-label="搜索阅读章节" value={contentsQuery} onChange={e => { setContentsQuery(e.target.value); setContentsScroll(0); if (contentsRef.current) contentsRef.current.scrollTop = 0; }} placeholder="输入标题或章号" className="mb-2 w-full rounded bg-[var(--reader-bg)] p-2 text-inherit" /><div ref={contentsRef} onScroll={e => setContentsScroll(e.currentTarget.scrollTop)} className="h-72 overflow-y-auto"><div aria-hidden="true" style={{ height: range.top }} />{listed.slice(range.start, range.end).map(c => <button key={c.id} aria-current={chapter.id === c.id ? 'page' : undefined} style={{ height: 48 }} onClick={() => { changeChapter(c.id); setShowContents(false); }} className="block w-full truncate px-3 text-left text-xs">第 {c.chapterNumber} 章 · {c.title}</button>)}<div aria-hidden="true" style={{ height: range.bottom }} /></div></section>}
       <article className="reader-page mx-auto max-w-3xl px-6 pb-16 pt-12 sm:px-12 sm:pt-16">
         <header className="mb-10 text-center sm:mb-14"><p className="text-[10px] tracking-[0.18em] text-[var(--reader-accent)]">第 {chapter.volumeNumber} 卷 · 第 {chapter.chapterNumber} 章</p><h3 className="mt-5 break-words font-serif text-2xl font-medium leading-relaxed sm:text-3xl">{chapter.title || '未命名章节'}</h3><div className="mx-auto my-5 h-px w-12 bg-[var(--reader-accent)] opacity-50" /><p className="text-[10px] text-[var(--reader-muted)]">{chapter.wordCount.toLocaleString()} 字 · 约 {Math.max(1, Math.ceil(chapter.wordCount / 400))} 分钟阅读</p></header>
         <div className="reader-prose whitespace-pre-wrap break-words font-serif" style={{ fontSize, lineHeight }}>

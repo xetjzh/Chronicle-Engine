@@ -3,6 +3,9 @@ import type { ProjectData } from '../types';
 type Schema = 'string' | 'number' | 'boolean' | 'record' | { [key: string]: Schema } | [Schema];
 const strings: Schema = ['string'];
 const character: Schema = {
+  'relationshipScores?': { __recordOf: { affection: 'number', trust: 'number' } },
+  'travelDestinationId?': 'string',
+  'travel?': { destinationId: 'string', route: strings, remainingHours: 'number' },
   'diedAtTimeStep?': 'number',
   id: 'string', name: 'string', title: 'string', age: 'number', gender: 'string', factionId: 'string',
   currentLocationId: 'string', occupation: 'string', appearance: 'string', personality: 'string',
@@ -17,6 +20,7 @@ const schema: Schema = {
   chapters: [{ id: 'string', title: 'string', content: 'string', outline: 'string', wordCount: 'number',
     chapterNumber: 'number', volumeNumber: 'number', associatedEventIds: strings, createdAt: 'string', updatedAt: 'string', status: 'string',
     'povCharacterId?': 'string', 'tensionScore?': 'number',
+    'generationCheckpoint?': { version: 'number', signature: 'string', title: 'string', outline: 'string', tasks: strings, userConstraint: 'string', 'editorInstruction?': 'string', beats: [{ actIndex: 'number', actName: 'string', outline: 'string', content: 'string', wordCount: 'number' }] },
     'actBeats?': [{ actIndex: 'number', actName: 'string', outline: 'string', content: 'string', wordCount: 'number' }],
     'extraction?': { chapterSummary: 'string', keyStateChanges: strings, newLoreLearned: strings, tensionScore: 'number' } }],
   characters: [character],
@@ -40,7 +44,7 @@ const schema: Schema = {
     'indentParagraphs?': 'boolean', 'theme?': 'string', 'fontSize?': 'number', 'lineHeight?': 'number',
     'fontFamily?': 'string', 'soundEnabled?': 'boolean', 'ambientMode?': 'string',
   },
-  settings: { povPreference: 'string', literaryStyle: 'string', chapterLengthTarget: 'number' },
+  settings: { povPreference: 'string', literaryStyle: 'string', chapterLengthTarget: 'number', 'referenceRetrievalEnabled?': 'boolean' },
   aiConfig: {
     activeProvider: 'string', activePreset: 'string',
     gemini: { model: 'string', 'thinkingBudget?': 'number' }, ollama: { baseUrl: 'string', model: 'string', contextLength: 'number', keepAlive: 'string' },
@@ -52,6 +56,7 @@ const schema: Schema = {
 
 // New snapshots are self-contained; older snapshots remain readable.
 const fields = schema as Record<string, Schema>;
+(fields.locations as [Record<string, Schema>])[0]['travelHours?'] = 'number';
 const snapshotFields = (fields.snapshots as [Record<string, Schema>])[0];
 snapshotFields['events?'] = fields.events;
 snapshotFields['worldState?'] = { worldName: 'string', locations: fields.locations, factions: fields.factions, rules: fields.rules, foreshadowing: fields.foreshadowing };
@@ -70,6 +75,10 @@ function validate(value: unknown, expected: Schema, path: string): void {
     return;
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) return fail();
+  if ('__recordOf' in expected) {
+    for (const [key, item] of Object.entries(value)) validate(item, expected.__recordOf, `${path}.${key}`);
+    return;
+  }
   for (const [key, child] of Object.entries(expected)) {
     const optional = key.endsWith('?');
     const field = optional ? key.slice(0, -1) : key;
@@ -118,6 +127,10 @@ function validateAndRepair(project: ProjectData): void {
   range(project.timeStepIndex, 'timeStepIndex', 0, Infinity, true);
   const numbers = new Set<number>();
   for (const ch of project.chapters) {
+    if (ch.generationCheckpoint) {
+      const cp = ch.generationCheckpoint;
+      if (cp.version !== 1 || !/^[a-f0-9]{1,8}$/.test(cp.signature) || cp.tasks.length !== 4 || cp.beats.length > 5 || cp.beats.some((beat, i) => beat.actIndex !== i + 1 || beat.wordCount < 0)) fail('chapters.generationCheckpoint');
+    }
     choice(ch.status, ['draft', 'audited', 'final'], 'chapters.status'); range(ch.chapterNumber, 'chapters.chapterNumber', 1, Infinity, true); range(ch.volumeNumber, 'chapters.volumeNumber', 1, Infinity, true); range(ch.wordCount, 'chapters.wordCount');
     if (numbers.has(ch.chapterNumber)) fail('chapters.chapterNumber 重复'); numbers.add(ch.chapterNumber);
     if (ch.tensionScore !== undefined) range(ch.tensionScore, 'chapters.tensionScore', 0, 100);
@@ -132,6 +145,18 @@ function validateAndRepair(project: ProjectData): void {
     const ref = (value: string | undefined, ids: Set<string>, path: string) => { if (!value || ids.has(value)) return value || ''; warn(`${path} 引用了不存在的记录，已清除关联并保留原文，请重新确认。`); return ''; };
     const refs = (values: string[], ids: Set<string>, path: string) => values.map(value => ref(value, ids, path)).filter(Boolean);
     for (const c of world.characters) {
+      if (c.relationshipScores) {
+        for (const score of Object.values(c.relationshipScores)) { range(score.affection, 'characters.relationshipScores.affection', -100, 100); range(score.trust, 'characters.relationshipScores.trust', 0, 100); }
+        c.relationshipScores = Object.fromEntries(Object.entries(c.relationshipScores).filter(([id]) => !!ref(id, characters, '人物关系分值')));
+      }
+      if (c.travelDestinationId) c.travelDestinationId = ref(c.travelDestinationId, locations, '旅行目的地') || undefined;
+      if (c.travel) {
+        range(c.travel.remainingHours, 'characters.travel.remainingHours', Number.EPSILON, 168);
+        const path = [c.currentLocationId, ...c.travel.route];
+        if (!c.travel.route.length || path[path.length - 1] !== c.travel.destinationId || path.some(id => !locations.has(id)) || path.slice(0, -1).some((id, i) => !world.locations.find(l => l.id === id)!.connectedLocationIds.includes(path[i + 1]))) {
+          c.travel = undefined; warn('旅行路线已失效，已停止计划并保留人物最后到达位置。');
+        }
+      }
       range(c.age, 'characters.age'); range(c.health, 'characters.health', 0, 100); range(c.wealth, 'characters.wealth');
       if (c.diedAtTimeStep !== undefined) range(c.diedAtTimeStep, 'characters.diedAtTimeStep', 0, Infinity, true);
       choice(c.currentMood, ['平静', '警惕', '焦虑', '激动', '愤怒', '悲恸', '疲惫'], 'characters.currentMood');
@@ -141,7 +166,7 @@ function validateAndRepair(project: ProjectData): void {
       unique(c.knownFacts, 'characters.knownFacts');
       for (const fact of c.knownFacts) { range(fact.confidence, 'characters.knownFacts.confidence', 0, 1); if (fact.sourceEventId) fact.sourceEventId = ref(fact.sourceEventId, eventIds, '事实来源') || undefined; }
     }
-    for (const l of world.locations) { choice(l.type, ['city', 'tavern', 'palace', 'wilderness', 'market', 'dungeon'], 'locations.type'); l.connectedLocationIds = refs(l.connectedLocationIds, locations, '地点连接'); }
+    for (const l of world.locations) { if (l.travelHours !== undefined) { range(l.travelHours, 'locations.travelHours', 2, 168, true); if (l.travelHours % 2) fail('locations.travelHours'); } choice(l.type, ['city', 'tavern', 'palace', 'wilderness', 'market', 'dungeon'], 'locations.type'); l.connectedLocationIds = refs(l.connectedLocationIds, locations, '地点连接'); }
     for (const f of world.factions) { range(f.powerLevel, 'factions.powerLevel', 0, 100); f.allies = refs(f.allies, factions, '同盟'); f.enemies = refs(f.enemies, factions, '敌对势力'); if (f.leaderId) f.leaderId = ref(f.leaderId, characters, '势力领袖') || undefined; }
     for (const r of world.rules) choice(r.category, ['natural', 'magic', 'social', 'taboo'], 'rules.category');
     for (const e of events) {

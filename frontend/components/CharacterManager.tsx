@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import { ProjectData, Character } from '../types';
 import { CharacterCardGeneratorModal } from './CharacterCardGeneratorModal';
 import { createBlankCharacter } from '../services/characterData';
+import { relationshipState, relationshipLabel, shortestPath } from '../services/worldDynamics';
 import {
   Users, UserCheck, Heart, Shield, Brain, Eye, Plus, Sparkles, AlertCircle, Wand2
 } from 'lucide-react';
@@ -15,6 +16,7 @@ export const CharacterManager: React.FC<CharacterManagerProps> = ({
   project,
   onUpdateProject,
 }) => {
+  const [relationshipQuery, setRelationshipQuery] = useState('');
   const [selectedCharId, setSelectedCharId] = useState<string>(project.characters[0]?.id || '');
   const [showCardGenerator, setShowCardGenerator] = useState<boolean>(false);
   const latest = useRef(project);
@@ -155,10 +157,23 @@ export const CharacterManager: React.FC<CharacterManagerProps> = ({
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2 text-xs">
-              <label>所在地点<select aria-label="人物所在地点" value={project.locations.some(l => l.id === currentChar.currentLocationId) ? currentChar.currentLocationId : ''} onChange={e => handleUpdateCurrentChar({ currentLocationId: e.target.value })} className="block w-full rounded bg-slate-800 p-2 mt-1"><option value="">尚未分配地点</option>{project.locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
+              <label>所在地点<select aria-label="人物所在地点" value={project.locations.some(l => l.id === currentChar.currentLocationId) ? currentChar.currentLocationId : ''} onChange={e => handleUpdateCurrentChar({ currentLocationId: e.target.value, travel: undefined, travelDestinationId: undefined })} className="block w-full rounded bg-slate-800 p-2 mt-1"><option value="">尚未分配地点</option>{project.locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
               <label>所属势力<select aria-label="人物所属势力" value={project.factions.some(f => f.id === currentChar.factionId) ? currentChar.factionId : ''} onChange={e => handleUpdateCurrentChar({ factionId: e.target.value })} className="block w-full rounded bg-slate-800 p-2 mt-1"><option value="">无所属势力</option>{project.factions.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}</select></label>
               {!project.locations.some(l => l.id === currentChar.currentLocationId) && <p role="status" className="text-amber-300">请先创建地点并在这里分配，人物才能参与世界模拟。</p>}
             </div>
+            <section className="rounded border border-slate-800 p-3 text-xs space-y-2">
+              <label>旅行目的地<select aria-label="人物旅行目的地" disabled={!!currentChar.travel} value={currentChar.travelDestinationId || ''} onChange={e => handleUpdateCurrentChar({ travelDestinationId: e.target.value || undefined })} className="ml-2 rounded bg-slate-800 p-2"><option value="">无旅行计划</option>{project.locations.filter(l => l.id !== currentChar.currentLocationId).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
+              {currentChar.travel && <p>正在途中，下一段剩余 {currentChar.travel.remainingHours} 小时。<button onClick={() => handleUpdateCurrentChar({ travel: undefined, travelDestinationId: undefined })} className="ml-2 underline">中止计划，停留在最后到达地点</button></p>}
+              {!currentChar.travel && currentChar.travelDestinationId && !shortestPath(project.locations, currentChar.currentLocationId, currentChar.travelDestinationId).length && <p role="status" className="text-amber-300">目的地尚无连通路径，请先编辑地点连接。</p>}
+            </section>
+            <section className="rounded border border-slate-800 p-3 text-xs space-y-2"><h4>关系数值（此人物视角）</h4><input aria-label="搜索关系人物" value={relationshipQuery} onChange={e => setRelationshipQuery(e.target.value)} placeholder="搜索人物；每次最多显示 20 名" className="rounded bg-slate-800 p-2" />{project.characters.filter(c => c.id !== currentChar.id && c.name.includes(relationshipQuery.trim())).slice(0, 20).map(other => {
+              const score = relationshipState(currentChar, other.id);
+              const change = (key: 'trust' | 'affection', number: number) => {
+                const value = { ...score, [key]: Math.min(100, Math.max(key === 'trust' ? 0 : -100, number)) };
+                handleUpdateCurrentChar({ relationshipScores: { ...currentChar.relationshipScores, [other.id]: value }, relationships: { ...currentChar.relationships, [other.id]: relationshipLabel(value) } });
+              };
+              return <div key={other.id} className="flex flex-wrap items-center gap-2"><span>{other.name} · {currentChar.relationships[other.id] || '漠然'}</span><label>好感<input aria-label={'与' + other.name + '的好感'} type="number" min={-100} max={100} value={score.affection} onChange={e => change('affection', Number(e.target.value) || 0)} className="ml-1 w-16 bg-slate-800 p-1" /></label><label>信任<input aria-label={'与' + other.name + '的信任'} type="number" min={0} max={100} value={score.trust} onChange={e => change('trust', Number(e.target.value) || 0)} className="ml-1 w-16 bg-slate-800 p-1" /></label></div>;
+            })}</section>
             {/* Psychological & Motives */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
               <div className="space-y-3 bg-slate-950/60 p-4 rounded-xl border border-slate-800">

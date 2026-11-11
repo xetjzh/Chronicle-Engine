@@ -1,7 +1,8 @@
+import { buildReferenceIndex, searchReferences } from '../services/referenceRetrieval';
 import { Dialog } from './Dialog';
 import { PdfDocumentViewer } from './PdfDocumentViewer';
 import { filterDocumentChapters } from './documentLibrarySearch';
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { ProjectData, ImportedDocument, DocumentExcerpt, LorebookEntry } from '../types';
 import { DocumentParserService } from '../services/documentParserService';
 import { AIProviderService } from '../services/aiProviderService';
@@ -28,6 +29,7 @@ export const DocumentLibraryModal: React.FC<DocumentLibraryModalProps> = ({
   onConvertToLorebook,
 }) => {
   const dialogTitleId = React.useId();
+  const [retrievalQuery, setRetrievalQuery] = useState('');
   const [selectedDocId, setSelectedDocId] = useState<string>(project.referenceDocs?.[0]?.id || '');
   const [selectedChapterIdx, setSelectedChapterIdx] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -65,6 +67,8 @@ export const DocumentLibraryModal: React.FC<DocumentLibraryModalProps> = ({
     latest.current.project = updated; latest.current.onUpdateProject(updated);
   };
   const docs = project.referenceDocs || [];
+  const referenceIndex = useMemo(() => buildReferenceIndex(docs), [docs]);
+  const matches = useMemo(() => searchReferences(referenceIndex, retrievalQuery), [referenceIndex, retrievalQuery]);
   const currentDoc = docs.find(d => d.id === selectedDocId) || docs[0];
   const currentChapter = currentDoc?.parsedChapters?.[selectedChapterIdx] || currentDoc?.parsedChapters?.[0];
 
@@ -254,6 +258,7 @@ ${query}
 
   return (
     <Dialog onClose={onClose} titleId={dialogTitleId} className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200" panelClassName="bg-slate-900 border border-slate-800 rounded-2xl max-w-6xl w-full h-[92vh] flex flex-col text-slate-200 overflow-hidden shadow-2xl">
+        <section aria-label="本地资料检索" className="border-b border-slate-800 p-3 text-xs space-y-2"><label className="block">按场景检索资料（本地 BM25 关键词匹配）<input aria-label="检索背景资料" value={retrievalQuery} onChange={e => setRetrievalQuery(e.target.value)} className="ml-2 rounded bg-slate-800 p-2" placeholder="例如月球低重力基地" /></label><label className="flex items-start gap-2"><input type="checkbox" checked={!!project.settings.referenceRetrievalEnabled} onChange={e => { const current = latest.current.project; commit({ ...current, settings: { ...current.settings, referenceRetrievalEnabled: e.target.checked } }); }} />AI 起草时召回相关参考片段（最多 3 块，将发送给所选模型；资料不是小说史实）</label>{referenceIndex.truncated && <p role="status" className="text-amber-300">已索引前 3000 块资料，超出部分请通过文献目录查找。</p>}<div className="max-h-28 overflow-y-auto space-y-1">{matches.map(hit => <button key={hit.docId + hit.chapterId + hit.start} onClick={() => { setSelectedDocId(hit.docId); setSelectedChapterIdx(docs.find(d => d.id === hit.docId)!.parsedChapters.findIndex(ch => ch.id === hit.chapterId)); setMobilePane('READER'); setActiveTab('READER'); }} className="block w-full truncate text-left text-purple-300">《{hit.docTitle}》/{hit.chapterTitle} · 匹配分 {hit.score.toFixed(2)} · {hit.text.slice(0, 100)}</button>)}</div></section>
         {/* Top Header */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-4 sm:px-6 py-3.5 bg-slate-950/80 shrink-0">
           <div className="flex items-center gap-3">

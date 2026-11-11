@@ -12,7 +12,7 @@ export function applyNovelChapterPatch(project: ProjectData, snapshot: NovelChap
   const chapter = project.chapters.find(item => item.id === snapshot.chapterId);
   if (!chapter || JSON.stringify(chapter) !== snapshot.fingerprint) return null;
   const changedProse = patch.content !== undefined && patch.content !== chapter.content;
-  const base = changedProse ? { ...chapter, extraction: undefined, tensionScore: undefined, actBeats: undefined, status: 'draft' as const } : chapter;
+  const base = changedProse ? { ...chapter, extraction: undefined, tensionScore: undefined, actBeats: undefined, generationCheckpoint: undefined, status: 'draft' as const } : chapter;
   return { ...project, chapters: project.chapters.map(item => item.id === chapter.id ? { ...base, ...patch, id: item.id } : item) };
 }
 

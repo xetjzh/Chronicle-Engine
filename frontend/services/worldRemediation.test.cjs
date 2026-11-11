@@ -57,3 +57,13 @@ test('review: invalid snapshot rule and clue identities are rejected before they
     assert.throws(() => parseProjectBackup(JSON.stringify(p)), /重复|唯一/);
   }
 });
+test('travel and numeric relationships survive serialization and a world snapshot restore', () => {
+  const p = world(); p.locations[0].connectedLocationIds = ['away']; p.locations.push({ ...loc('away'), travelHours: 4 });
+  p.characters.push(char('other')); p.characters[0].travelDestinationId = 'away'; p.characters[0].relationshipScores = { other: { affection: 20, trust: 65 } };
+  const next = SimulationEngine.stepTime(p, 2).updatedProject;
+  const { parseProjectBackup } = loadService(file('backupValidation'));
+  const restored = parseProjectBackup(JSON.stringify(next)); assert.equal(restored.characters[0].travel.remainingHours, 2); assert.equal(restored.characters[0].relationshipScores.other.trust, 65);
+  const { storageService: store } = loadService(file('storageService')); store.saveProject = () => {};
+  const saved = store.createSnapshot(restored, '途中', ''); const changed = SimulationEngine.stepTime(saved, 4).updatedProject;
+  const rolled = store.restoreSnapshot(changed, saved.snapshots[0].id); assert.equal(rolled.characters[0].travel.remainingHours, 2); assert.doesNotThrow(() => parseProjectBackup(JSON.stringify(rolled)));
+});

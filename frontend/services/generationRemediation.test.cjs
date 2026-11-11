@@ -36,3 +36,35 @@ test('F22 cancelling the pipeline aborts its active transport and starts no furt
   const { GeminiService } = services(async (_c, opts) => { calls++; signal = opts.signal; controller.abort(); return outline; })('geminiService');
   await assert.rejects(GeminiService.generateChapter({ project: book(), volumeNumber: 1, chapterNumber: 1, events: [], signal: controller.signal }), /创作已取消/); assert.equal(calls, 1); assert.equal(signal, controller.signal);
 });
+test('completed acts checkpoint and resume without charging again for the outline or prior acts', async () => {
+  let calls = 0, checkpoint;
+  const p = book(); p.settings.chapterLengthTarget = 200;
+  const { ChapterExpansionEngine } = services(async () => { calls++; if (calls === 3) throw Error('断线'); return calls === 1 ? outline : '文'.repeat(70); })('chapterExpansionEngine');
+  const params = { project: p, volumeNumber: 1, chapterNumber: 1, events: [], onCheckpoint: value => checkpoint = value };
+  await assert.rejects(ChapterExpansionEngine.generateDeepChapter(params), /断线/); assert.equal(checkpoint.beats.length, 1);
+  let resumedCalls = 0;
+  const resumed = services(async () => { resumedCalls++; return '续'.repeat(70); })('chapterExpansionEngine').ChapterExpansionEngine;
+  const result = await resumed.generateDeepChapter({ ...params, resumeFrom: checkpoint });
+  assert.equal(resumedCalls, 3); assert.ok(result.content.startsWith('文')); assert.equal(result.beats.length, 4);
+  await assert.rejects(resumed.generateDeepChapter({ ...params, project: { ...p, authorNote: '改过简介' }, resumeFrom: checkpoint }), /断点|设置/);
+});
+test('review: a short checkpoint with supplement act 5 resumes without appending or requesting another supplement', async () => {
+  const p = book(); p.settings.chapterLengthTarget = 100; let checkpoint;
+  let calls = 0;
+  const engine = services(async () => { calls++; return calls === 1 ? outline : 'x'; })('chapterExpansionEngine').ChapterExpansionEngine;
+  const params = { project: p, chapterNumber: 1, volumeNumber: 1, events: [], onCheckpoint: value => checkpoint = value };
+  await engine.generateDeepChapter(params); assert.equal(checkpoint.beats.length, 5);
+  const before = calls; const result = await engine.generateDeepChapter({ ...params, resumeFrom: checkpoint });
+  assert.equal(calls, before); assert.equal(result.beats.length, 5); assert.equal(new Set(result.beats.map(b => b.actIndex)).size, 5);
+});
+
+test('reference retrieval opt-in applies consistently to full chapters and individual act rewrites', async () => {
+  for (const enabled of [false, true]) {
+    const p = book(), calls = []; p.settings.referenceRetrievalEnabled = enabled; p.settings.chapterLengthTarget = 100;
+    p.referenceDocs = [{ id: 'doc', title: '月面手册', parsedChapters: [{ id: 'c', title: '基地', content: '月球基地依靠低重力密封空气循环。' }] }];
+    const engine = services(async (_c, opts) => { calls.push(opts); return calls.length === 1 ? outline : '文'.repeat(30); })('chapterExpansionEngine').ChapterExpansionEngine;
+    const result = await engine.generateDeepChapter({ project: p, chapterNumber: 1, volumeNumber: 1, events: [], userConstraint: '月球基地' });
+    await engine.regenerateSingleAct({ project: p, chapterNumber: 1, actIndex: 1, chapterTitle: result.title, actTask: '开场', existingBeats: result.beats, events: [], userConstraint: '月球基地' });
+    for (const call of calls) assert.equal((call.lorebookBlock || '').includes('月面手册'), enabled);
+  }
+});

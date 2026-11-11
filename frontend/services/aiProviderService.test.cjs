@@ -7,7 +7,7 @@ const { transform } = require('sucrase');
 
 // Keep the service real and replace only network/SDK boundaries. No provider
 // credentials, live inference, or billable requests are used by this suite.
-function service({ fetch, generateContent, timerMs } = {}) {
+function service({ fetch, generateContent, generateContentStream, timerMs } = {}) {
   const timers = new Set();
   const output = transform(fs.readFileSync(path.join(__dirname, 'aiProviderService.ts'), 'utf8'), {
     transforms: ['typescript', 'imports'],
@@ -25,11 +25,47 @@ function service({ fetch, generateContent, timerMs } = {}) {
     clearTimeout(timer) { timers.delete(timer); clearTimeout(timer); },
   }, { filename: 'aiProviderService.ts' });
   evaluate(specifier => {
+    if (specifier === './textStream') return require('../testSupport/loadService.cjs').loadService(path.join(__dirname, 'textStream.ts'));
     assert.equal(specifier, '@google/genai');
-    return { GoogleGenAI: class { models = { generateContent }; } };
+    return { GoogleGenAI: class { models = { generateContent, generateContentStream }; } };
   }, module, module.exports);
   return { AIProviderService: module.exports.AIProviderService, timers };
 }
+
+test('generation streams actual compatible SSE and Ollama NDJSON deltas with one request', async () => {
+  for (const provider of ['openai_compatible', 'ollama']) {
+    const deltas = []; let calls = 0;
+    const { AIProviderService } = service({ fetch: async (_url, init) => {
+      calls++; assert.equal(JSON.parse(init.body).stream, true);
+      return new Response(provider === 'ollama' ? '{"message":{"content":"实时"},"done":false}\n{"message":{"content":"正文"},"done":true}\n' : 'data: {"choices":[{"delta":{"content":"实时"}}]}\n\ndata: {"choices":[{"delta":{"content":"正文"}}]}\n\ndata: [DONE]\n\n', { headers: { 'content-type': provider === 'ollama' ? 'application/x-ndjson' : 'text/event-stream' } });
+    } });
+    const result = await AIProviderService.generateText(config(provider), { prompt: '写作', onText: d => deltas.push(d) });
+    assert.equal(result, '实时正文'); assert.equal(deltas.join('|'), '实时|正文'); assert.equal(calls, 1);
+  }
+});
+test('Gemini streaming uses the installed SDK stream interface and preserves cancellation', async () => {
+  const deltas = [], controller = new AbortController();
+  const { AIProviderService } = service({ generateContentStream: async function* (req) {
+    assert.ok(req.config.abortSignal); yield { text: '第一段' }; yield { text: '第二段', candidates: [{ finishReason: 'STOP' }] };
+  } });
+  assert.equal(await AIProviderService.generateText(config('gemini'), { prompt: '写作', signal: controller.signal, onText: d => deltas.push(d) }), '第一段第二段');
+  assert.equal(deltas.length, 2);
+});
+
+test('the public stream generator cancels the transport when its consumer stops early', async () => {
+  let signal, canceled = false;
+  const { AIProviderService, timers } = service({ fetch: async (_url, init) => {
+    signal = init.signal;
+    return new Response(new ReadableStream({
+      start(controller) { controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"预览"}}]}\n\n')); },
+      cancel() { canceled = true; },
+    }), { headers: { 'content-type': 'text/event-stream' } });
+  } });
+  const iterator = AIProviderService.generateTextStream(config(), { prompt: '写作' });
+  assert.equal((await iterator.next()).value, '预览');
+  await iterator.return();
+  assert.equal(signal.aborted, true); assert.equal(canceled, true); assert.equal(timers.size, 0);
+});
 
 function config(provider = 'openai_compatible') {
   return {

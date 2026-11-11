@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { ProjectData, WritingDeskSettings } from '../types';
 import { soundEffects } from '../services/soundEffects';
 import { AIProviderService } from '../services/aiProviderService';
+import { listWindow } from './listWindow';
 import { Dialog } from './Dialog';
 import { PdfDocumentViewer } from './PdfDocumentViewer';
 import { AlignLeft, BookOpen, Check, ChevronRight, Feather, List, Maximize2, Minimize2, Palette, Plus, RefreshCw, Sparkles, SplitSquareVertical, Target, Trash2, Volume2, VolumeX, Wand2, X } from 'lucide-react';
@@ -23,6 +24,9 @@ const writingThemes = {
 
 export const AuthorDeskEditor: React.FC<AuthorDeskEditorProps> = ({ project, onUpdateProject, onOpenDocumentLibrary }) => {
   const [activeChapterId, setActiveChapterId] = useState(project.chapters[0]?.id || '');
+  const [chapterScroll, setChapterScroll] = useState(0);
+  const [chapterQuery, setChapterQuery] = useState('');
+  const chapterListRef = useRef<HTMLElement>(null);
   const [showChapterList, setShowChapterList] = useState(false);
   const [showThemePicker, setShowThemePicker] = useState(false);
   const [isSplitReferenceOpen, setIsSplitReferenceOpen] = useState(false);
@@ -49,6 +53,13 @@ export const AuthorDeskEditor: React.FC<AuthorDeskEditorProps> = ({ project, onU
     ? project.chapters.find(chapter => chapter.id === deleteTarget.chapterId)
     : undefined;
   const reference = project.referenceDocs?.find(doc => doc.id === referenceId) || project.referenceDocs?.[0];
+  const deskChapters = project.chapters.filter(ch => !chapterQuery.trim() || ch.title.includes(chapterQuery.trim()) || String(ch.chapterNumber) === chapterQuery.trim());
+  const chapterRange = listWindow(deskChapters.length, chapterScroll, 640, 80);
+  useEffect(() => {
+    const index = deskChapters.findIndex(ch => ch.id === currentChapter?.id);
+    if (!chapterListRef.current || index < 0) return;
+    if (index < chapterRange.start || index >= chapterRange.end) { const offset = index * 80; chapterListRef.current.scrollTop = offset; setChapterScroll(offset); }
+  }, [currentChapter?.id, chapterQuery]);
   const theme = writingThemes[deskSettings.theme] || writingThemes.ink;
   const themeStyle = {
     '--desk-bg': theme.bg, '--desk-surface': theme.surface, '--desk-text': theme.text,
@@ -178,6 +189,7 @@ export const AuthorDeskEditor: React.FC<AuthorDeskEditorProps> = ({ project, onU
         prompt: `${instruction}\n\n“${targetText}”\n\n直接输出处理后的纯正文。`,
         authorsNote: source.aiConfig.authorsNote?.enabled ? source.aiConfig.authorsNote.content : undefined,
         signal: active.controller.signal,
+        onText: delta => { if (mounted.current && activeAIRequest.current === active && !active.controller.signal.aborted) setPendingAIText(value => value + delta); },
       });
       if (!mounted.current || activeAIRequest.current !== active || active.controller.signal.aborted) return;
       if (!generated?.trim()) { setAssistantNotice('本次没有生成文字，请稍后重试。'); return; }
@@ -189,6 +201,7 @@ export const AuthorDeskEditor: React.FC<AuthorDeskEditorProps> = ({ project, onU
         return;
       }
       commitProject(result.project);
+      setPendingAIText('');
       setAssistantNotice(operation === 'polish' ? '段落润色已应用。' : '续写已添加。');
       if (result.project.deskSettings?.soundEnabled) soundEffects.playChime();
     } catch (error) {
@@ -233,9 +246,10 @@ export const AuthorDeskEditor: React.FC<AuthorDeskEditorProps> = ({ project, onU
       <div className={`desk-body flex min-h-0 flex-1 flex-col xl:flex-row ${deskSettings.isZenMode ? 'overflow-y-auto xl:overflow-hidden' : ''}`}>
         <aside id="desk-chapter-list" aria-label="章节目录" className={`desk-chapter-sidebar shrink-0 border-b border-[var(--desk-border)] bg-[var(--desk-surface)] p-4 xl:w-56 xl:border-b-0 xl:border-r ${showChapterList ? 'block' : 'hidden xl:block'} ${deskSettings.isZenMode ? 'xl:overflow-y-auto' : ''}`}>
           <div className="mb-4 flex items-center justify-between"><div><h4 className="text-xs font-semibold">作品目录</h4><p className="mt-1.5 text-[10px] text-[var(--desk-muted)]">{project.chapters.length} 章 · {totalWords.toLocaleString()} 字</p></div><button onClick={handleCreateChapter} aria-label="新建章节" title="新建章节" className={`${toolClass} !px-2`}><Plus className={iconClass} /></button></div>
-          <nav aria-label="选择写作章节" className="max-h-80 space-y-1.5 overflow-y-auto xl:max-h-[650px]">
-            {project.chapters.map(chapter => { const selected = chapter.id === currentChapter?.id; return <div key={chapter.id} className={`desk-chapter flex w-full items-center rounded-lg border ${selected ? 'border-[var(--desk-border)] bg-black/10' : 'border-transparent hover:bg-black/5'}`}><button onClick={() => { setActiveChapterId(chapter.id); setShowChapterList(false); }} aria-current={selected ? 'page' : undefined} className="flex min-w-0 flex-1 items-start gap-2 p-2.5 text-left"><span className="mt-0.5 shrink-0 font-mono text-[10px] text-[var(--desk-muted)]">{String(chapter.chapterNumber).padStart(2, '0')}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{chapter.title || '未命名章节'}</span><span className="mt-1.5 block text-[10px] text-[var(--desk-muted)]">{chapter.wordCount.toLocaleString()} 字 · {chapter.status === 'final' ? '定稿' : chapter.status === 'audited' ? '已审阅' : '草稿'}</span></span>{selected && <ChevronRight className="mt-0.5 h-3 w-3 shrink-0 text-[var(--desk-accent)]" />}</button><button onClick={() => setDeleteTarget({ projectId: project.id, chapterId: chapter.id })} aria-label={`删除章节：${chapter.title || '未命名章节'}`} title="删除章节" className="mr-1.5 grid min-h-9 w-8 shrink-0 place-items-center rounded-lg text-[var(--desk-muted)] transition hover:bg-red-500/10 hover:text-red-500"><Trash2 className={iconClass} /></button></div>; })}
+          <input aria-label="搜索写作章节" value={chapterQuery} onChange={e => { setChapterQuery(e.target.value); setChapterScroll(0); if (chapterListRef.current) chapterListRef.current.scrollTop = 0; }} placeholder="按标题或章号查找" className="mb-2 w-full rounded bg-[var(--desk-bg)] p-2 text-xs" /><nav ref={chapterListRef} onScroll={e => setChapterScroll(e.currentTarget.scrollTop)} aria-label="选择写作章节" className="max-h-80 overflow-y-auto xl:max-h-[650px]">
+            <div aria-hidden="true" style={{ height: chapterRange.top }} />{deskChapters.slice(chapterRange.start, chapterRange.end).map(chapter => { const selected = chapter.id === currentChapter?.id; return <div key={chapter.id} style={{ height: 80 }} className={`desk-chapter flex w-full items-center rounded-lg border ${selected ? 'border-[var(--desk-border)] bg-black/10' : 'border-transparent hover:bg-black/5'}`}><button onClick={() => { setActiveChapterId(chapter.id); setShowChapterList(false); }} aria-current={selected ? 'page' : undefined} className="flex min-w-0 flex-1 items-start gap-2 p-2.5 text-left"><span className="mt-0.5 shrink-0 font-mono text-[10px] text-[var(--desk-muted)]">{String(chapter.chapterNumber).padStart(2, '0')}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{chapter.title || '未命名章节'}</span><span className="mt-1.5 block text-[10px] text-[var(--desk-muted)]">{chapter.wordCount.toLocaleString()} 字 · {chapter.status === 'final' ? '定稿' : chapter.status === 'audited' ? '已审阅' : '草稿'}</span></span>{selected && <ChevronRight className="mt-0.5 h-3 w-3 shrink-0 text-[var(--desk-accent)]" />}</button><button onClick={() => setDeleteTarget({ projectId: project.id, chapterId: chapter.id })} aria-label={`删除章节：${chapter.title || '未命名章节'}`} title="删除章节" className="mr-1.5 grid min-h-9 w-8 shrink-0 place-items-center rounded-lg text-[var(--desk-muted)] transition hover:bg-red-500/10 hover:text-red-500"><Trash2 className={iconClass} /></button></div>; })}
             {project.chapters.length === 0 && <p className="py-5 text-center text-xs text-[var(--desk-muted)]">故事从第一章开始。</p>}
+            <div aria-hidden="true" style={{ height: chapterRange.bottom }} />
           </nav>
           <div className="mt-6 border-t border-[var(--desk-border)] pt-4"><span className="flex items-center gap-2 text-[10px] text-[var(--desk-muted)]"><Target className={iconClass} />今日写作目标</span><div className="mt-2 flex items-baseline gap-1"><strong className="font-mono text-lg font-medium text-[var(--desk-accent)]">{deskSettings.currentSessionWords.toLocaleString()}</strong><span className="text-[10px] text-[var(--desk-muted)]">/ {deskSettings.targetDailyWords.toLocaleString()} 字</span></div><div className="mt-3 h-1 overflow-hidden rounded-full bg-black/15" role="progressbar" aria-label="今日写作进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressRatio}><div className="h-full rounded-full bg-[var(--desk-accent)]" style={{ width: `${progressRatio}%` }} /></div></div>
         </aside>

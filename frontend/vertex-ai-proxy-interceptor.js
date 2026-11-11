@@ -58,7 +58,7 @@
     const inputUrl = url instanceof URL ? url.href : url;
     if (inputUrl === liveTarget) {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      return new originalWebSocket(`${protocol}//${window.location.host}/ws-proxy?target=${encodeURIComponent(inputUrl)}`, protocols);
+      return new originalWebSocket(`${protocol}//${window.location.host}/ws-proxy?target=${encodeURIComponent(inputUrl)}&proxy-marker=${encodeURIComponent(publicMarker)}`, protocols);
     }
     return new originalWebSocket(url, protocols);
   };

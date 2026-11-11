@@ -85,7 +85,10 @@ test('unrelated requests retain native fetch arguments and live sockets keep pro
   const live = 'wss://aiplatform.googleapis.com//ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent';
   const ws = new scope.WebSocket(live, ['protocol']);
   assert.ok(ws instanceof Socket);
-  assert.equal(ws.args[0], 'wss://writing.test/ws-proxy?target=' + encodeURIComponent(live));
+  const socketUrl = new URL(ws.args[0]);
+  assert.equal(socketUrl.origin + socketUrl.pathname, 'wss://writing.test/ws-proxy');
+  assert.equal(socketUrl.searchParams.get('target'), live);
+  assert.ok(socketUrl.searchParams.get('proxy-marker'), 'browser sockets carry the public marker without custom headers');
   assert.equal(scope.WebSocket.OPEN, 1);
 });
 

@@ -74,7 +74,7 @@ export const WorldEditor: React.FC<WorldEditorProps> = ({
   };
 
   const handleDeleteLocation = (id: string) => {
-    if (project.characters.some(c => c.currentLocationId === id) || project.events.some(e => e.locationId === id)
+    if (project.characters.some(c => c.currentLocationId === id || c.travelDestinationId === id || c.travel?.route.includes(id)) || project.events.some(e => e.locationId === id)
       || project.snapshots.some(s => s.characters.some(c => c.currentLocationId === id))) {
       setNotice('此地点仍被人物、历史事件或快照引用。请先迁移人物；保留历史所需的地点不能删除。'); return;
     }
@@ -321,6 +321,8 @@ export const WorldEditor: React.FC<WorldEditorProps> = ({
                   </button>
                 </div>
                 <div className="text-slate-400 line-clamp-2">{loc.description}</div>
+                <label className="block text-[11px]">进入此地点所需小时 (2–168)<input aria-label={loc.name + '的行程小时'} type="number" min={2} max={168} step={2} value={loc.travelHours || 4} onChange={e => onUpdateProject({ ...project, locations: project.locations.map(l => l.id === loc.id ? { ...l, travelHours: Math.min(168, Math.max(2, Math.round(Number(e.target.value) / 2) * 2 || 4)) } : l) })} className="ml-2 w-16 rounded bg-slate-800 p-1" /></label>
+                <fieldset className="text-[11px]"><legend>从这里可直接前往（单向连接）</legend>{project.locations.filter(l => l.id !== loc.id).map(target => <label key={target.id} className="mr-3 inline-flex gap-1"><input type="checkbox" aria-label={loc.name + '连接' + target.name} checked={loc.connectedLocationIds.includes(target.id)} onChange={e => onUpdateProject({ ...project, locations: project.locations.map(l => l.id === loc.id ? { ...l, connectedLocationIds: e.target.checked ? [...new Set([...l.connectedLocationIds, target.id])] : l.connectedLocationIds.filter(id => id !== target.id) } : l) })} />{target.name}</label>)}</fieldset>
                 <div className="pt-2 border-t border-slate-800/80 text-[11px] text-purple-400">
                   环境：{loc.climateOrDanger}
                 </div>

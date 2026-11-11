@@ -1,4 +1,4 @@
-import type { ProjectData, ConsistencyIssue, WorldEvent } from '../types';
+import type { ProjectData, ConsistencyIssue, WorldEvent, ChapterActBeat, ChapterGenerationCheckpoint } from '../types';
 import { AIProviderService } from './aiProviderService';
 import { LorebookService } from './lorebookService';
 import { HierarchicalMemoryService } from './hierarchicalMemoryService';
@@ -20,7 +20,10 @@ export class GeminiService {
     targetWordCount?: number;
     signal?: AbortSignal;
     onProgress?: ExpansionProgressCallback;
-  }): Promise<{ title: string; outline: string; content: string; activatedLorebookKeys: string[] }> {
+    onPreview?: (text: string) => void;
+    onCheckpoint?: (checkpoint: ChapterGenerationCheckpoint) => void;
+    resumeFrom?: ChapterGenerationCheckpoint;
+  }): Promise<{ title: string; outline: string; content: string; beats: ChapterActBeat[]; activatedLorebookKeys: string[] }> {
     const { project, volumeNumber, chapterNumber, povCharacterId, events, userConstraint, onProgress } = params;
 
     // Scan Lorebook keys for audit badge
@@ -41,6 +44,9 @@ export class GeminiService {
       onProgress,
       targetWordCount: params.targetWordCount,
       signal: params.signal,
+      onPreview: params.onPreview,
+      onCheckpoint: params.onCheckpoint,
+      resumeFrom: params.resumeFrom,
     });
     if (!expanded.content?.trim()) throw new Error('章节生成返回的正文为空，请重试。');
 
@@ -48,6 +54,7 @@ export class GeminiService {
       title: expanded.title,
       outline: expanded.outline,
       content: expanded.content,
+      beats: expanded.beats,
       activatedLorebookKeys: activatedKeys,
     };
   }

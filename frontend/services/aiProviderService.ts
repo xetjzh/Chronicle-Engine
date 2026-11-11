@@ -8,6 +8,7 @@ export interface GenerateTextOptions {
   overrideSampling?: Partial<SamplingParams>;
   thinkingBudget?: number;
   signal?: AbortSignal;
+  onText?: (delta: string) => void;
 }
 
 export interface ProviderHealthResult {
@@ -158,6 +159,37 @@ export class AIProviderService {
     }
   }
 
+  public static async *generateTextStream(config: AIProviderConfig, options: Omit<GenerateTextOptions, 'onText'>): AsyncGenerator<string> {
+    const controller = new AbortController(), pending: string[] = [];
+    let done = false, failure: unknown, wake: (() => void) | undefined;
+    const abort = () => controller.abort();
+    if (options.signal?.aborted) controller.abort();
+    options.signal?.addEventListener('abort', abort, { once: true });
+    const task = this.generateText(config, { ...options, signal: controller.signal, onText: delta => { pending.push(delta); wake?.(); } })
+      .then(() => { done = true; wake?.(); }, error => { failure = error; done = true; wake?.(); });
+    try {
+      while (!done || pending.length) {
+        if (pending.length) yield pending.shift()!;
+        else await new Promise<void>(resolve => { wake = resolve; });
+      }
+      if (failure) throw failure;
+    } finally { controller.abort(); options.signal?.removeEventListener('abort', abort); await task; }
+  }
+
+  private static async requestStream(url: string, init: RequestInit, provider: string, format: 'sse' | 'ndjson', onText: (delta: string) => void): Promise<string> {
+    const response = await fetch(url, init);
+    if (!response.ok) { void response.body?.cancel().catch(() => {}); throw this.httpError(provider, response.status); }
+    if (response.headers.get('content-type')?.includes('application/json')) {
+      const value = await response.json();
+      if (init.signal?.aborted) throw this.canceledError();
+      const text = this.requireText(format === 'sse' ? value?.choices?.[0]?.message?.content : value?.message?.content ?? value?.response, provider);
+      onText(text); return text;
+    }
+    const { readTextStream } = await import('./textStream');
+    try { return await readTextStream(response, format, onText, init.signal || undefined); }
+    catch { if (init.signal?.aborted) throw this.canceledError(); throw new ProviderRequestError(`${provider} 流式响应中断或格式错误，请重试。`); }
+  }
+
   /**
    * Constructs SillyTavern-style complete combined prompt with Lorebook and Author's Note
    */
@@ -241,7 +273,7 @@ export class AIProviderService {
       // If a direct Gemini API key is ever required, source it from
       // config.gemini.apiKey (user-supplied at runtime) instead.
       const ai = new GoogleGenAI({ vertexai: true });
-      const response = await ai.models.generateContent({
+      const input = {
         model,
         contents: {
           role: 'user',
@@ -252,7 +284,22 @@ export class AIProviderService {
           abortSignal: signal,
           httpOptions: { timeout: timeoutMs, retryOptions: { attempts: 1 } },
         },
-      });
+      };
+      if (options.onText) {
+        const chunks = await ai.models.generateContentStream(input); let text = '', finished = false;
+        for await (const chunk of chunks) {
+          if (signal.aborted) throw this.canceledError();
+          if (chunk.text) { text += chunk.text; if (text.length > 500000) throw new ProviderRequestError('生成文本超过单次上限。'); options.onText(chunk.text); }
+          if (chunk.candidates?.some(candidate => candidate.finishReason)) {
+            if (chunk.candidates.some(candidate => !['STOP', 'MAX_TOKENS'].includes(String(candidate.finishReason)))) throw new ProviderRequestError('Gemini 未完成有效正文。');
+            finished = true;
+          }
+        }
+        if (signal.aborted) throw this.canceledError();
+        if (!finished) throw new ProviderRequestError('Gemini 流式响应不完整，请重试。');
+        return this.requireText(text, 'Gemini');
+      }
+      const response = await ai.models.generateContent(input);
       return this.requireText(response.text, 'Gemini');
     });
   }
@@ -280,7 +327,7 @@ export class AIProviderService {
     const payload = {
       model,
       messages,
-      stream: false,
+      stream: !!options.onText,
       options: {
         temperature: sampling.temperature ?? 0.7,
         top_p: sampling.topP ?? 0.9,
@@ -296,12 +343,14 @@ export class AIProviderService {
     };
 
     return this.boundedRequest('Ollama', 120000, options.signal, async signal => {
-      const data = await this.requestJson(url, {
+      const init = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
         signal,
-      }, 'Ollama');
+      };
+      if (options.onText) return this.requestStream(url, init, 'Ollama', 'ndjson', options.onText);
+      const data = await this.requestJson(url, init, 'Ollama');
       return this.requireText(data?.message?.content ?? data?.response, 'Ollama');
     });
   }
@@ -334,7 +383,7 @@ export class AIProviderService {
       top_p: sampling.topP ?? 0.9,
       frequency_penalty: sampling.frequencyPenalty ?? 0.2,
       presence_penalty: sampling.presencePenalty ?? 0.2,
-      stream: false,
+      stream: !!options.onText,
     };
 
     if (sampling.maxTokens) {
@@ -357,12 +406,14 @@ export class AIProviderService {
     }
 
     return this.boundedRequest('OpenAI 兼容接口', timeoutMs, options.signal, async signal => {
-      const data = await this.requestJson(url, {
+      const init = {
         method: 'POST',
         headers,
         body: JSON.stringify(payload),
         signal,
-      }, 'OpenAI 兼容接口');
+      };
+      if (options.onText) return this.requestStream(url, init, 'OpenAI 兼容接口', 'sse', options.onText);
+      const data = await this.requestJson(url, init, 'OpenAI 兼容接口');
       return this.requireText(data?.choices?.[0]?.message?.content, 'OpenAI 兼容接口');
     });
   }

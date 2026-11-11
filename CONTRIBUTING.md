@@ -8,10 +8,13 @@
 
 ```sh
 npm ci
+npm run setup:hooks
 npm run dev-frontend
 ```
 
 前端纯写作、资料管理和阅读不需要云凭证。需要本地 Vertex 代理时，复制 `backend/.env.example` 为 `backend/.env.local`，按 [运维说明](docs/operations.md) 配置，再运行 `npm run dev`。不要将本地环境文件、应用默认凭证或作品备份提交到仓库。
+
+`setup:hooks` 仅为当前克隆设置 `core.hooksPath=.githooks`；已有其他自定义钩子路径时会拒绝覆盖，请将扫描命令接入原有钩子。提交前运行 `node scripts/scan-secrets.mjs --staged`，读取 Git 暂存内容；`npm run check:secrets` 检查已跟踪文件的工作区内容，统一 `check` 与 CI 也执行它。扫描已知密钥格式、私钥头和非模板 `.env` 文件名，只报告文件、行号和规则。它不扫描完整历史或识别所有自定义凭据；钩子可被绕过，仍需人工审阅和泄漏后的撤销/轮换。
 
 ## 改动与验证
 

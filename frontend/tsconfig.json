@@ -9,6 +9,7 @@
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "types": ["node", "vite/client"]
   },
   "include": ["App.tsx", "index.tsx", "types.ts", "components/**/*.tsx", "components/**/*.ts", "services/**/*.ts", "vite.config.ts"],

@@ -1,4 +1,5 @@
 import type { Character, WorldEvent, ProjectData, LocationNode } from '../types';
+import { shortestPath, changeRelationship } from './worldDynamics.ts';
 
 export class SimulationEngine {
   /**
@@ -22,9 +23,33 @@ export class SimulationEngine {
 
     const nextTimeStepIndex = project.timeStepIndex + 1;
     const nextTimeStr = this.calculateNextTimeString(project.currentSimulationTime, stepHours);
+    const travelling = new Set<string>();
+    for (const char of characters.filter(c => c.isAlive)) {
+      if (!char.travel && char.travelDestinationId && char.travelDestinationId !== char.currentLocationId) {
+        const route = shortestPath(locations, char.currentLocationId, char.travelDestinationId);
+        if (route.length) char.travel = { destinationId: char.travelDestinationId, route, remainingHours: locations.find(l => l.id === route[0])?.travelHours || 4 };
+      }
+      if (!char.travel) continue;
+      travelling.add(char.id);
+      const oldLocation = char.currentLocationId, trip = char.travel; let hours = stepHours;
+      while (trip.route.length && hours > 0) {
+        const here = locations.find(l => l.id === char.currentLocationId), next = locations.find(l => l.id === trip.route[0]);
+        if (!next || !here?.connectedLocationIds.includes(next.id)) { char.travel = undefined; char.travelDestinationId = undefined; break; }
+        if (hours < trip.remainingHours) { trip.remainingHours -= hours; hours = 0; break; }
+        hours -= trip.remainingHours; char.currentLocationId = next.id; trip.route.shift();
+        trip.remainingHours = locations.find(l => l.id === trip.route[0])?.travelHours || 4;
+      }
+      const arrived = char.currentLocationId === trip.destinationId;
+      if (arrived) { char.travel = undefined; char.travelDestinationId = undefined; }
+      const event: WorldEvent = { id: `evt_${crypto.randomUUID()}`, simulationTime: nextTimeStr, timeStepIndex: nextTimeStepIndex, eventType: 'travel', locationId: char.currentLocationId,
+        participantIds: [char.id], causeEventIds: [], title: `${char.name}${arrived ? '抵达目的地' : char.travel ? '正在途中' : '中止旅行'}`,
+        description: char.travel ? `沿连通路线前往 ${locations.find(l => l.id === trip.destinationId)?.name || trip.destinationId}，下一段还需 ${trip.remainingHours} 小时。` : arrived ? '已完成计划行程。' : '路线已变化，停留在最后到达的地点。',
+        consequences: [], stateChanges: [{ characterId: char.id, field: 'currentLocationId', oldValue: oldLocation, newValue: char.currentLocationId }], visibility: { isPublic: false, knownByCharacterIds: [char.id] }, confirmed: true };
+      newEvents.push(event); existingEvents.push(event); this.propagateFactsFromEvent(event, [char]);
+    }
 
     // Group alive characters by location
-    const aliveChars = characters.filter(c => c.isAlive);
+    const aliveChars = characters.filter(c => c.isAlive && !travelling.has(c.id));
     const locMap = new Map<string, Character[]>();
     aliveChars.forEach(c => {
       const list = locMap.get(c.currentLocationId) || [];
@@ -116,7 +141,8 @@ export class SimulationEngine {
         consequences: ['双方情绪转为警惕'],
         stateChanges: [
           { characterId: a.id, field: 'currentMood', oldValue: previousMoodA, newValue: '警惕' },
-          { characterId: b.id, field: 'currentMood', oldValue: previousMoodB, newValue: '警惕' }
+          { characterId: b.id, field: 'currentMood', oldValue: previousMoodB, newValue: '警惕' },
+          changeRelationship(a, b.id, -2, -3), changeRelationship(b, a.id, -2, -3)
         ],
         visibility: {
           isPublic: false,
@@ -141,7 +167,8 @@ export class SimulationEngine {
         consequences: amount ? [`${a.name}向${b.name}转交 ${amount} 单位财物`] : ['完成一次交流，未转交财物'],
         stateChanges: [
           { characterId: a.id, field: 'wealth', oldValue: oldWealthA, newValue: a.wealth },
-          { characterId: b.id, field: 'wealth', oldValue: oldWealthB, newValue: b.wealth }
+          { characterId: b.id, field: 'wealth', oldValue: oldWealthB, newValue: b.wealth },
+          changeRelationship(a, b.id, 1, 1), changeRelationship(b, a.id, amount ? 5 : 1, amount ? 4 : 1)
         ],
         visibility: {
           isPublic: false,
@@ -163,7 +190,7 @@ export class SimulationEngine {
       title: `${a.name} 与 ${b.name} 在${loc.name}擦肩而过`,
       description: `${a.name}与${b.name}在${loc.name}短暂交流，随后各自继续当前事务。`,
       consequences: ['未起冲突，暂归平静'],
-      stateChanges: [],
+      stateChanges: [changeRelationship(a, b.id, 1, 1), changeRelationship(b, a.id, 1, 1)],
       visibility: {
         isPublic: true,
         knownByCharacterIds: [a.id, b.id]
@@ -233,20 +260,21 @@ export class SimulationEngine {
       const targetLoc = allLocs.find(l => l.id === targetLocId);
       if (targetLoc) {
         const oldLocId = char.currentLocationId;
-        char.currentLocationId = targetLocId;
+        char.travelDestinationId = targetLocId;
+        char.travel = { destinationId: targetLocId, route: [targetLocId], remainingHours: targetLoc.travelHours || 4 };
         return {
           id: `evt_${crypto.randomUUID()}`,
           simulationTime: timeStr,
           timeStepIndex: stepIdx,
           eventType: 'travel',
-          locationId: targetLocId,
+          locationId: oldLocId,
           participantIds: [char.id],
           causeEventIds: [],
-          title: `${char.name} 前往 ${targetLoc.name}`,
+          title: `${char.name} 启程前往 ${targetLoc.name}`,
           description: `${char.name}离开${loc.name}，沿已知路线前往${targetLoc.name}。`,
-          consequences: [`位置变更至 ${targetLoc.name}`],
+          consequences: [`旅行开始，尚未抵达 ${targetLoc.name}`],
           stateChanges: [
-            { characterId: char.id, field: 'currentLocationId', oldValue: oldLocId, newValue: targetLocId }
+            { characterId: char.id, field: 'travel', oldValue: undefined, newValue: char.travel }
           ],
           visibility: {
             isPublic: false,

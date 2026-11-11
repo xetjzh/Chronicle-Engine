@@ -267,6 +267,12 @@ test('malformed live setup closes only the connection and abnormal upstream clos
   assert.equal((await fetch(`${runtime.url}/healthz`)).status, 200);
 });
 
+test('browser WebSocket query marker is accepted with an exact trusted origin', async t => {
+  const runtime = await start(t, enabled(), { getAccessToken: async () => 'token', WebSocket: FakeUpstream });
+  const ws = new WebSocket(runtime.url.replace('http:', 'ws:') + '/ws-proxy?target=' + encodeURIComponent(liveTarget) + '&proxy-marker=' + encodeURIComponent(marker), { headers: { origin } });
+  await once(ws, 'open'); ws.close(); await once(ws, 'close');
+});
+
 test('shutdown bounds active HTTP and live connections and reports draining', async t => {
   const runtime = await start(t, enabled({ SHUTDOWN_TIMEOUT_MS: '100' }), { getAccessToken: async () => 'token', WebSocket: FakeUpstream });
   const ws = new WebSocket(runtime.url.replace('http:', 'ws:') + '/ws-proxy?target=' + encodeURIComponent(liveTarget), { headers: { origin, 'x-app-proxy': marker } });

@@ -63,6 +63,7 @@ export interface AIProviderConfig {
 }
 
 export interface LocationNode {
+  travelHours?: number;
   id: string;
   name: string;
   type: 'city' | 'tavern' | 'palace' | 'wilderness' | 'market' | 'dungeon';
@@ -91,6 +92,9 @@ export interface CognitiveFact {
 }
 
 export interface Character {
+  relationshipScores?: Record<string, { affection: number; trust: number }>;
+  travelDestinationId?: string;
+  travel?: { destinationId: string; route: string[]; remainingHours: number };
   id: string;
   name: string;
   title: string;
@@ -178,6 +182,7 @@ export interface ChapterExtraction {
 }
 
 export interface Chapter {
+  generationCheckpoint?: ChapterGenerationCheckpoint;
   id: string;
   volumeNumber: number;
   chapterNumber: number;
@@ -201,6 +206,12 @@ export interface Volume {
   theme: string;
   summary: string;
   chapterCount: number;
+}
+
+export interface ChapterGenerationCheckpoint {
+  editorInstruction?: string;
+  version: 1; signature: string; title: string; outline: string; tasks: string[];
+  beats: ChapterActBeat[]; userConstraint: string;
 }
 
 export interface BatchPipelineStatus {
@@ -321,6 +332,7 @@ export interface ProjectData {
   aiConfig: AIProviderConfig;
 
   settings: {
+    referenceRetrievalEnabled?: boolean;
     povPreference: '第三人称有限视角' | '第一人称' | '第三人称全知视角' | '多重视角轮转';
     literaryStyle: '严肃文学' | '古朴古典' | '轻快细腻' | '悬疑冷峻' | '生活日常';
     chapterLengthTarget: number;

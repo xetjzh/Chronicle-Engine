@@ -1,3 +1,4 @@
+import { resolveTrustedClientIp } from './client-address.js';
 /**
  * @license
  * Copyright 2025 Google LLC
@@ -172,16 +173,6 @@ export function createRuntime(config = readConfig(), dependencies = {}) {
   function requestHeaders(token) {
     return { authorization: `Bearer ${token}`, 'x-goog-user-project': config.project, 'content-type': 'application/json' };
   }
-  function resolveClientIp(request, socket) {
-    if (config.trustProxy) {
-      const forwarded = request.headers['x-forwarded-for'];
-      if (typeof forwarded === 'string' && forwarded.trim()) {
-        const client = forwarded.split(',')[0].trim();
-        if (client) return client;
-      }
-    }
-    return socket.remoteAddress || 'unknown';
-  }
   function rejectUpgrade(socket, status) {
     if (!socket.destroyed) socket.end(`HTTP/1.1 ${status} ${status === 503 ? 'Service Unavailable' : status === 403 ? 'Forbidden' : status === 429 ? 'Too Many Requests' : status === 404 ? 'Not Found' : 'Bad Request'}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
   }
@@ -204,9 +195,9 @@ export function createRuntime(config = readConfig(), dependencies = {}) {
     if (!allowedOrigins.has(request.headers.origin)) return rejectUpgrade(socket, 403);
     // Mirror the same public proxy-marker check as the HTTP /api-proxy gate so
     // that both transports require identical client identification.
-    if (request.headers['x-app-proxy'] !== config.proxyMarker) return rejectUpgrade(socket, 403);
+    if (request.headers['x-app-proxy'] !== config.proxyMarker && url.searchParams.get('proxy-marker') !== config.proxyMarker) return rejectUpgrade(socket, 403);
     if (url.searchParams.get('target') !== LIVE_TARGET) return rejectUpgrade(socket, 400);
-    const clientIp = resolveClientIp(request, socket);
+    const clientIp = resolveTrustedClientIp(request, app.get('trust proxy fn'));
     if (!upgradeAllowed(clientIp)) return rejectUpgrade(socket, 429);
     const controller = new AbortController();
     controllers.add(controller);
