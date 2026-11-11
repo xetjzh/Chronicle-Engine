@@ -124,13 +124,33 @@ export class AIProviderService {
     if (!response.ok) {
       // Do not surface or parse provider error bodies: these can echo secrets.
       void response.body?.cancel().catch(() => {});
-      throw this.httpError(provider, response.status);
+      throw this.responseError(response, provider, url);
     }
     try {
       return await response.json();
     } catch {
       throw new ProviderRequestError(`${provider} 响应不是有效 JSON，请检查接口地址及代理返回内容。`);
     }
+  }
+
+  private static responseError(response: Response, provider: string, url: string): ProviderRequestError {
+    if (url === '/api/openai/chat/completions') {
+      const messages: Record<string, string> = {
+        disabled: '服务端转发尚未启用，请在服务器配置 OPENAI_PROXY_BASE_URL 和 OPENAI_PROXY_ALLOWED_ORIGINS 后重启。',
+        origin: '服务端转发拒绝当前网页来源，请核对 OPENAI_PROXY_ALLOWED_ORIGINS 中的协议、域名和端口。',
+        marker: '服务端转发标记不一致，请核对服务器 PROXY_HEADER 与前端配置。',
+        target: '所填服务地址与服务器转发目标不一致，请核对 OPENAI_PROXY_BASE_URL。',
+        headers: '服务端转发仅支持 Authorization、X-API-Key、API-Key、OpenAI-Organization 和 OpenAI-Project 请求头。',
+        payload: '服务端转发不接受当前请求格式，请检查模型与生成参数。',
+        authentication: '服务端转发需要填写 API Key 或受支持的认证请求头。',
+        transport: '服务器连接上游接口失败，请检查服务器网络、DNS、TLS 和上游响应格式。',
+        timeout: '服务端转发等待上游响应超时，请检查模型响应速度或服务器 API_TIMEOUT_MS。',
+        draining: '服务器正在停止或重启，请稍后重试。',
+      };
+      const message = messages[response.headers.get('x-chronicle-proxy-error') || ''];
+      if (message) return new ProviderRequestError(message);
+    }
+    return this.httpError(provider, response.status);
   }
 
   /**
@@ -178,7 +198,7 @@ export class AIProviderService {
 
   private static async requestStream(url: string, init: RequestInit, provider: string, format: 'sse' | 'ndjson', onText: (delta: string) => void): Promise<string> {
     const response = await fetch(url, init);
-    if (!response.ok) { void response.body?.cancel().catch(() => {}); throw this.httpError(provider, response.status); }
+    if (!response.ok) { void response.body?.cancel().catch(() => {}); throw this.responseError(response, provider, url); }
     if (response.headers.get('content-type')?.includes('application/json')) {
       const value = await response.json();
       if (init.signal?.aborted) throw this.canceledError();
@@ -405,15 +425,18 @@ export class AIProviderService {
       throw new ProviderRequestError('认证或自定义请求头格式无效，请检查请求头名称、值及 API 密钥。');
     }
 
+    const relay = !!config.openaiCompatible.useServerProxy;
+    const requestUrl = relay ? '/api/openai/chat/completions' : url;
     return this.boundedRequest('OpenAI 兼容接口', timeoutMs, options.signal, async signal => {
-      const init = {
+      const init: RequestInit = {
         method: 'POST',
-        headers,
-        body: JSON.stringify(payload),
+        headers: relay ? { 'Content-Type': 'application/json', 'X-App-Proxy': 'tqHmXyUOiCqsU1IqUeo2MNyqjReMuVZ8' } : headers,
+        credentials: relay ? 'same-origin' : undefined,
+        body: JSON.stringify(relay ? { upstreamUrl: url, headers: Object.fromEntries([...headers].filter(([name]) => name !== 'content-type')), body: payload } : payload),
         signal,
       };
-      if (options.onText) return this.requestStream(url, init, 'OpenAI 兼容接口', 'sse', options.onText);
-      const data = await this.requestJson(url, init, 'OpenAI 兼容接口');
+      if (options.onText) return this.requestStream(requestUrl, init, 'OpenAI 兼容接口', 'sse', options.onText);
+      const data = await this.requestJson(requestUrl, init, 'OpenAI 兼容接口');
       return this.requireText(data?.choices?.[0]?.message?.content, 'OpenAI 兼容接口');
     });
   }

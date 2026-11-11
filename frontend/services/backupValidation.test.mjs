@@ -21,6 +21,13 @@ const backup = () => ({
 test('accepts an empty but complete project backup', () => {
   assert.deepEqual(parseProjectBackup(JSON.stringify(backup())), backup());
 });
+
+test('optional relay selection round-trips and rejects a non-boolean value', () => {
+  const project = backup(); project.aiConfig.openaiCompatible.useServerProxy = true;
+  assert.equal(parseProjectBackup(JSON.stringify(project)).aiConfig.openaiCompatible.useServerProxy, true);
+  project.aiConfig.openaiCompatible.useServerProxy = 'yes';
+  assert.throws(() => parseProjectBackup(JSON.stringify(project)), /useServerProxy/);
+});
 test('rejects identity-only JSON before it can crash a workspace', () => {
   assert.throws(() => parseProjectBackup('{"id":"x","worldName":"x"}'), /备份/);
 });

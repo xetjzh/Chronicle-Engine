@@ -55,6 +55,7 @@ export interface AIProviderConfig {
     keepAlive: string;
   };
   openaiCompatible: {
+    useServerProxy?: boolean;
     baseUrl: string;
     apiKey: string;
     model: string;

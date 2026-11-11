@@ -14,7 +14,7 @@ try {
     process.exitCode = 1;
     void runtime.shutdown().then(() => process.exit(1));
   });
-  runtime.server.listen(config.port, config.host, () => console.log(JSON.stringify({ event: 'server_listening', port: config.port, aiProxyEnabled: config.aiProxyEnabled })));
+  runtime.server.listen(config.port, config.host, () => console.log(JSON.stringify({ event: 'server_listening', port: config.port, aiProxyEnabled: config.aiProxyEnabled, openaiProxyEnabled: !!config.openaiProxyEndpoint })));
   for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => {
     console.log(JSON.stringify({ event: 'server_draining', signal }));
     void runtime.shutdown().then(() => {

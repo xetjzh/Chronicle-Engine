@@ -18,13 +18,13 @@ function integer(env, name, fallback, minimum, maximum) {
   if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) invalid(name);
   return parsed;
 }
-function origins(value) {
+function origins(value, name = 'API_ALLOWED_ORIGINS') {
   if (!value) return [];
   return [...new Set(value.split(',').map(raw => {
     const candidate = raw.trim();
     let url;
-    try { url = new URL(candidate); } catch { invalid('API_ALLOWED_ORIGINS'); }
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || url.pathname !== '/' || url.origin !== candidate) invalid('API_ALLOWED_ORIGINS');
+    try { url = new URL(candidate); } catch { invalid(name); }
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || url.pathname !== '/' || url.origin !== candidate) invalid(name);
     return url.origin;
   }))];
 }
@@ -48,6 +48,17 @@ export function readConfig(env = process.env) {
   const payloadMaxBytes = match && Number(match[1]) * ({ b: 1, kb: 1024, mb: 1024 * 1024 }[match[2].toLowerCase()]);
   if (!Number.isSafeInteger(payloadMaxBytes) || payloadMaxBytes < 1 || payloadMaxBytes > 50 * 1024 * 1024) invalid('API_PAYLOAD_MAX_SIZE');
   const allowedOrigins = origins(env.API_ALLOWED_ORIGINS);
+  const openaiProxyOrigins = origins(env.OPENAI_PROXY_ALLOWED_ORIGINS, 'OPENAI_PROXY_ALLOWED_ORIGINS');
+  let openaiProxyEndpoint;
+  if (env.OPENAI_PROXY_BASE_URL?.trim()) {
+    let url;
+    try { url = new URL(env.OPENAI_PROXY_BASE_URL.trim()); } catch { invalid('OPENAI_PROXY_BASE_URL'); }
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) invalid('OPENAI_PROXY_BASE_URL');
+    const path = url.pathname.replace(/\/+$/, '');
+    url.pathname = path.endsWith('/chat/completions') ? path : `${path}/chat/completions`;
+    openaiProxyEndpoint = url.href;
+    if (!openaiProxyOrigins.length) invalid('OPENAI_PROXY_ALLOWED_ORIGINS');
+  }
   const project = env.GOOGLE_CLOUD_PROJECT;
   const location = env.GOOGLE_CLOUD_LOCATION;
   const proxyMarker = env.PROXY_HEADER ?? DEFAULT_PROXY_MARKER;
@@ -55,8 +66,8 @@ export function readConfig(env = process.env) {
     if (!project || !/^(?:[a-z][a-z0-9-]{4,28}[a-z0-9]|[0-9]{6,30})$/.test(project)) invalid('GOOGLE_CLOUD_PROJECT');
     if (!location || !/^(?:global|[a-z]+(?:-[a-z0-9]+)+)$/.test(location)) invalid('GOOGLE_CLOUD_LOCATION');
     if (!allowedOrigins.length) invalid('API_ALLOWED_ORIGINS');
-    if (typeof proxyMarker !== 'string' || !/^[\x21-\x7e]{1,256}$/.test(proxyMarker)) invalid('PROXY_HEADER');
   }
+  if ((aiProxyEnabled || openaiProxyEndpoint) && (typeof proxyMarker !== 'string' || !/^[\x21-\x7e]{1,256}$/.test(proxyMarker))) invalid('PROXY_HEADER');
   return Object.freeze({
     aiProxyEnabled,
     serveFrontend: flag(env, 'SERVE_FRONTEND'),
@@ -64,6 +75,8 @@ export function readConfig(env = process.env) {
     port: integer(env, 'API_BACKEND_PORT', 5000, 1, 65535),
     payloadMaxBytes,
     allowedOrigins: Object.freeze(allowedOrigins),
+    openaiProxyEndpoint,
+    openaiProxyOrigins: Object.freeze(openaiProxyOrigins),
     project,
     location,
     proxyMarker,

@@ -12,6 +12,7 @@ export default defineConfig(() => {
         proxy: {
           //Target your Node.js backend
           '/api-proxy': 'http://localhost:5000',
+          '/api/openai': 'http://localhost:5000',
           '/ws-proxy': {target: 'ws://localhost:5000', ws: true},
         },
       },

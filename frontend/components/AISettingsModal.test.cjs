@@ -90,6 +90,10 @@ function mount(project = makeProject(), testProviderHealth = async () => ({ ok: 
       input.props.onChange({ target: { value } });
       render();
     },
+    toggle(label, checked) {
+      const input = nodes().find(node => node.props['aria-label'] === label);
+      assert.ok(input); input.props.onChange({ target: { checked } }); render();
+    },
     render, text: () => content(root),
     readInput: label => nodes().find(node => node.props['aria-label'] === label)?.props.value,
     unmount: () => effects.forEach(effect => effect?.cleanup?.()),
@@ -104,6 +108,17 @@ const choices = [
   ['DeepSeek 逻辑推演', 'deepseek_causality', 'openai_compatible', 0.6, 4000],
   ['Gemini 长篇起草', 'gemini_epic', 'gemini', 0.8, 4000],
 ];
+
+test('server relay choice is used by connection tests, saved, and retained after reopening', async () => {
+  let tested;
+  const modal = mount(makeProject(), async (_provider, config) => { tested = config; return { ok:true, provider:'openai_compatible', message:'通过' }; });
+  modal.toggle('通过本服务转发兼容接口', true);
+  assert.match(modal.text(), /密钥将经过当前部署服务器/);
+  await modal.click('测试连通性'); assert.equal(tested.openaiCompatible.useServerProxy, true);
+  modal.click('保存设置'); assert.equal(modal.saved.aiConfig.openaiCompatible.useServerProxy, true);
+  const reopened = mount(modal.saved); reopened.toggle('通过本服务转发兼容接口', false); reopened.click('保存设置');
+  assert.equal(reopened.saved.aiConfig.openaiCompatible.useServerProxy, false);
+});
 
 test('each preset can be selected, saved, and shown as selected after reopening', () => {
   const original = makeProject();

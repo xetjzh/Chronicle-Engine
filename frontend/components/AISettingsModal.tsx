@@ -413,6 +413,8 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                     {testingProvider === 'openai_compatible' ? '测试中…' : '测试连通性'}
                   </button>
                 </div>
+                <label className="flex items-start gap-2 text-slate-300"><input aria-label="通过本服务转发兼容接口" type="checkbox" checked={!!config.openaiCompatible.useServerProxy} onChange={e => updateConfig(c => ({ ...c, openaiCompatible: { ...c.openaiCompatible, useServerProxy: e.target.checked } }))} />通过本服务转发（用于接口不允许浏览器跨域的情况）</label>
+                <p className="text-[11px] text-slate-400">{config.openaiCompatible.useServerProxy ? '请求与密钥将经过当前部署服务器；管理员须配置匹配的上游地址及允许的网页来源。服务器逐请求使用密钥，不保存。' : '浏览器直接连接所填服务，接口须允许当前网页跨域访问。部署服务器能连接成功，不代表浏览器可以直连。'}</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="text-[11px] text-slate-400 block mb-1">API Base URL</label>

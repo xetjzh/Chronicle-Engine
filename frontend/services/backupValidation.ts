@@ -48,7 +48,7 @@ const schema: Schema = {
   aiConfig: {
     activeProvider: 'string', activePreset: 'string',
     gemini: { model: 'string', 'thinkingBudget?': 'number' }, ollama: { baseUrl: 'string', model: 'string', contextLength: 'number', keepAlive: 'string' },
-    openaiCompatible: { baseUrl: 'string', apiKey: 'string', model: 'string', 'customHeaders?': 'record' },
+    openaiCompatible: { baseUrl: 'string', apiKey: 'string', model: 'string', 'customHeaders?': 'record', 'useServerProxy?': 'boolean' },
     authorsNote: { enabled: 'boolean', content: 'string', insertionDepth: 'number' },
     sampling: { temperature: 'number', topP: 'number', topK: 'number', repetitionPenalty: 'number', frequencyPenalty: 'number', presencePenalty: 'number', maxTokens: 'number', stopSequences: strings },
   },

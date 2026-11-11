@@ -45,7 +45,7 @@ test('configuration permits credential-free startup and rejects unsafe settings 
 test('health and readiness do not acquire credentials and disabled proxy is explicit', async t => {
   const runtime = await start(t, readConfig({}), { getAccessToken: () => { throw new Error('credentials should not be requested'); } });
   assert.deepEqual(await (await fetch(`${runtime.url}/healthz`)).json(), { status: 'ok' });
-  assert.deepEqual(await (await fetch(`${runtime.url}/readyz`)).json(), { status: 'ready', aiProxyEnabled: false });
+  assert.deepEqual(await (await fetch(`${runtime.url}/readyz`)).json(), { status: 'ready', aiProxyEnabled: false, openaiProxyEnabled: false });
   const disabled = await proxy(runtime.url, {});
   assert.equal(disabled.status, 503);
   assert.match(disabled.headers.get('content-type'), /application\/json/);

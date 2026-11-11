@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { GoogleAuth } from 'google-auth-library';
 import { WebSocketServer, WebSocket } from 'ws';
 import { readConfig } from './config.js';
+import { attachOpenAIRelay } from './openai-relay.js';
 import { API_CLIENT_MAP, ALLOWED_UPSTREAM_HOSTS, WEB_SOCKET_BODY_POLICY, validateProxiedRequestBody, asProxiedBodyText, extractParams, sanitizeForwardedHeaders, STUDIO_CLIENT_TAG } from './proxy-policy.js';
 
 const LIVE_TARGET = 'wss://aiplatform.googleapis.com//ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent';
@@ -66,7 +67,7 @@ export function createRuntime(config = readConfig(), dependencies = {}) {
   app.set('trust proxy', config.trustProxy);
   app.use((_req, res, next) => { res.set('X-Content-Type-Options', 'nosniff'); next(); });
   app.get('/healthz', (_req, res) => res.set('Cache-Control', 'no-store').json({ status: 'ok' }));
-  app.get('/readyz', (_req, res) => res.set('Cache-Control', 'no-store').status(draining ? 503 : 200).json(draining ? { status: 'draining' } : { status: 'ready', aiProxyEnabled: config.aiProxyEnabled }));
+  app.get('/readyz', (_req, res) => res.set('Cache-Control', 'no-store').status(draining ? 503 : 200).json(draining ? { status: 'draining' } : { status: 'ready', aiProxyEnabled: config.aiProxyEnabled, openaiProxyEnabled: !!config.openaiProxyEndpoint }));
 
   function proxyGate(req, res, next) {
     if (draining) return jsonError(res, 503, 'Server is draining');
@@ -80,6 +81,7 @@ export function createRuntime(config = readConfig(), dependencies = {}) {
 
   const limiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 100, standardHeaders: true, legacyHeaders: false,
     validate: { xForwardedForHeader: false }, message: { error: 'Too many requests' } });
+  attachOpenAIRelay(app, config, { upstreamFetch, controllers, abortable, limiter, logger, isDraining: () => draining });
   app.post('/api-proxy', proxyGate, limiter, express.json({ limit: config.payloadMaxBytes }), async (req, res) => {
     const envelope = req.body;
     if (!isObject(envelope) || typeof envelope.originalUrl !== 'string' || envelope.originalUrl.length > 2048 ||

@@ -6,7 +6,7 @@ import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 
 const directory = fileURLToPath(new URL('./', import.meta.url));
-const baseEnv = () => ({ ...process.env, AI_PROXY_ENABLED: 'false', SERVE_FRONTEND: 'false', TRUST_PROXY: 'false', API_ALLOWED_ORIGINS: '', API_BACKEND_HOST: '127.0.0.1' });
+const baseEnv = () => ({ ...process.env, AI_PROXY_ENABLED: 'false', OPENAI_PROXY_BASE_URL: '', OPENAI_PROXY_ALLOWED_ORIGINS: '', SERVE_FRONTEND: 'false', TRUST_PROXY: 'false', API_ALLOWED_ORIGINS: '', API_BACKEND_HOST: '127.0.0.1' });
 
 test('bootstrap rejects bad configuration with a nonzero exit and no supplied value in output', async () => {
   const child = spawn(process.execPath, ['server.js'], { cwd: directory, env: { ...baseEnv(), API_BACKEND_PORT: 'private-value-not-a-port' }, windowsHide: true });
@@ -39,7 +39,7 @@ test('real process starts without cloud credentials and exits after its SIGTERM 
   child.stderr.on('data', data => { output += data; });
   for (let attempt = 0; !output.includes('server_listening') && attempt < 100; attempt++) await new Promise(resolve => setTimeout(resolve, 20));
   assert.match(output, /server_listening/);
-  assert.deepEqual(await (await fetch(`http://127.0.0.1:${port}/readyz`)).json(), { status: 'ready', aiProxyEnabled: false });
+  assert.deepEqual(await (await fetch(`http://127.0.0.1:${port}/readyz`)).json(), { status: 'ready', aiProxyEnabled: false, openaiProxyEnabled: false });
   const exit = once(child, 'exit');
   child.send('SIGTERM');
   const [code] = await Promise.race([exit, new Promise((_, reject) => { const timer = setTimeout(() => reject(new Error('SIGTERM handler did not exit within 1 second')), 1000); timer.unref(); })]);

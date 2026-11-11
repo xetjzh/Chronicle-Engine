@@ -81,6 +81,20 @@ function config(provider = 'openai_compatible') {
 const json = body => Response.json(body);
 const completion = text => json({ choices: [{ message: { role: 'assistant', content: text }, finish_reason: 'stop' }] });
 
+test('server relay uses the same-origin route for health and streaming with no direct fallback', async () => {
+  const input = config(); input.openaiCompatible.useServerProxy = true; const calls = [];
+  const { AIProviderService } = service({ fetch: async (url, init) => {
+    calls.push(url); assert.equal(url, '/api/openai/chat/completions'); assert.equal(init.credentials, 'same-origin');
+    const envelope = JSON.parse(init.body); assert.equal(envelope.upstreamUrl, 'https://gateway.example/v1/chat/completions');
+    assert.equal(new Headers(envelope.headers).get('authorization'), 'Bearer key-secret'); assert.equal(new Headers(init.headers).get('authorization'), null);
+    return completion('已连接');
+  } });
+  assert.equal((await AIProviderService.testProviderHealth('openai_compatible', input)).ok, true);
+  const chunks = []; assert.equal(await AIProviderService.generateText(input, { prompt: 'test', onText: t => chunks.push(t) }), '已连接'); assert.equal(chunks.join(''), '已连接'); assert.equal(calls.length, 2);
+  const failing = service({ fetch: async () => new Response('{}', { status:503, headers:{'x-chronicle-proxy-error':'disabled'} }) }).AIProviderService;
+  await assert.rejects(failing.generateText(input, {prompt:'test'}), /服务端转发.*未启用/);
+});
+
 test('compatible endpoint normalization appends paths before query parameters without duplicating the endpoint', async () => {
   for (const [baseUrl, expected] of [
     ['  https://gateway.example/v1/?key=query-secret  ', 'https://gateway.example/v1/chat/completions?key=query-secret'],

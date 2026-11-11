@@ -67,9 +67,44 @@ API_ALLOWED_ORIGINS=http://localhost:5173
 
 Ollama 与 OpenAI 兼容接口由浏览器直接访问。模型设置中的 `localhost` 指用户的设备，不是部署服务器或容器；从 HTTPS 页面连接 HTTP 服务还可能受到浏览器混合内容策略限制。配置可达地址、允许来源与适当的服务认证。
 
+## OpenAI 兼容接口服务端转发
+
+默认仍由浏览器直连。若同一模型与密钥在酒馆等后端客户端可用、在本项目浏览器中连接失败，应检查供应商是否允许带 Authorization 的跨域预检。网页托管在 Ubuntu 不代表第三方请求从 Ubuntu 发出；直连模式使用浏览器设备的网络。服务端转发让浏览器向本项目 `/api/openai/chat/completions` 发起同源请求，再由部署服务器连接固定上游。
+
+以智谱和 SSH 隧道网页 `http://localhost:18080` 为例，在仓库根目录已有 `.env` 中添加或更新（不要覆盖其他已有配置）：
+
+```dotenv
+OPENAI_PROXY_BASE_URL=https://open.bigmodel.cn/api/paas/v4
+OPENAI_PROXY_ALLOWED_ORIGINS=http://localhost:18080
+```
+
+Compose 将这两个变量注入容器。后端直接使用 Node 启动时，改在 `backend/.env.local` 或进程环境中配置。上游必须使用 HTTPS，不能包含用户名、密码、查询参数或片段；会补全 `/chat/completions`，也接受完整端点。网页来源须精确匹配协议、域名和端口，不带末尾 `/`；多个来源用英文逗号分隔，不能用 `*`。`localhost` 和 `127.0.0.1` 是不同来源。改为域名/HTTPS 后同步更新来源列表。
+
+```sh
+docker compose up --build -d
+docker compose ps
+curl -fsS http://127.0.0.1:8080/readyz
+```
+
+就绪信息应包含 `openaiProxyEnabled: true`；它只证明功能已配置，不验证供应商网络、模型或密钥。无需打开 `AI_PROXY_ENABLED`，也无需 Google Cloud 凭据。Vite 开发环境已代理 `/api/openai` 到本地后端 5000，需额外允许实际 Vite 来源。
+
+网页中选择 OpenAI 兼容接口，基址填 `https://open.bigmodel.cn/api/paas/v4`，模型填写该账号实际可用的模型名，填写自己的 API Key，勾选“通过本服务转发”，保存后测试。测试会产生一次短生成请求，可能计费。仅开启服务器配置不会自动更改浏览器中旧作品的直连选项。
+
+该转发只支持本项目文本 Chat Completions 请求与 JSON/SSE 响应。每次请求的目标必须与管理员配置完全一致，不接受任意上游或跳转；认证头限于 Authorization、X-API-Key、API-Key、OpenAI-Organization 和 OpenAI-Project。密钥与正文会通过当前部署服务器，应用不持久化或记录它们；外部网关也应避免记录请求正文。转发输出上限为 8 MiB，共用 API 请求大小、超时、限流和停机取消机制。取消后不保证供应商立即停止计费。
+
+公开部署时，组织身份入口还应保护 `/api/openai/chat/completions`；来源与公开标记不提供账号认证。前端连接设置仍可被作品 JSON 备份包含，不要公开分享原始备份。禁止通过把服务器密钥写入前端构建来解决跨域问题。
+
+| 提示 | 处理 |
+| --- | --- |
+| 服务端转发尚未启用 | 检查变量是否真正进入容器，更新后重新启动。 |
+| 拒绝当前网页来源 | 配置浏览器地址栏对应的精确来源，注意 SSH 隧道端口。 |
+| 服务地址与服务器目标不一致 | 核对网页 API Base URL 和服务器配置。 |
+| 服务器连接上游失败或超时 | 检查服务器 DNS、TLS、网络和模型响应时间；不等同于密钥错误。 |
+| 上游返回 401/403/429 | 转发已到达供应商，核对认证、模型权限或额度；不原样显示可能携带密钥的供应商错误正文。 |
+
 ## TLS 与身份入口
 
-提供给其他用户前，在应用前部署组织的 TLS 与身份认证网关，统一保护前端、`/api-proxy` 和 `/ws-proxy`。网关需支持 WebSocket 升级和流式响应，避免缓冲导致生成结果长时间不出现，并设置与应用相容的超时。
+提供给其他用户前，在应用前部署组织的 TLS 与身份认证网关，统一保护前端、`/api-proxy`、`/api/openai` 和 `/ws-proxy`。网关需支持 WebSocket 升级和流式响应，避免缓冲导致生成结果长时间不出现，并设置与应用相容的超时。
 
 保持 Node 端口仅对网关可达，不直接将容器 5000 端口暴露到公网。默认回环绑定适合同机网关；独立网关需要受控网络与明确的防火墙规则。只有确需使用转发头时，才将 `TRUST_PROXY` 设置为受控代理的明确 IP / CIDR，避免信任任意客户端伪造的地址。
 
