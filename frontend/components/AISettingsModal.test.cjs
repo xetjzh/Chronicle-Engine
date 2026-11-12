@@ -120,6 +120,14 @@ test('server relay choice is used by connection tests, saved, and retained after
   assert.equal(reopened.saved.aiConfig.openaiCompatible.useServerProxy, false);
 });
 
+test('compatible timeout and GLM reasoning effort can be selected, saved and reopened', () => {
+  const project=makeProject();project.aiConfig.openaiCompatible.model='glm-5.3';const modal=mount(project);
+  assert.equal(modal.readInput('兼容接口等待上限（秒）'),300);assert.equal(modal.readInput('GLM-5.3 思考强度'),'low');
+  modal.change('GLM-5.3 思考强度','max');modal.change('兼容接口等待上限（秒）','420');modal.click('保存设置');
+  assert.equal(modal.saved.aiConfig.openaiCompatible.reasoningEffort,'max');assert.equal(modal.saved.aiConfig.openaiCompatible.requestTimeoutSeconds,420);
+  const reopened=mount(modal.saved);assert.equal(reopened.readInput('兼容接口等待上限（秒）'),420);assert.equal(reopened.readInput('GLM-5.3 思考强度'),'max');
+});
+
 test('each preset can be selected, saved, and shown as selected after reopening', () => {
   const original = makeProject();
   const modal = mount(original);

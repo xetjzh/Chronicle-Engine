@@ -48,7 +48,7 @@ const schema: Schema = {
   aiConfig: {
     activeProvider: 'string', activePreset: 'string',
     gemini: { model: 'string', 'thinkingBudget?': 'number' }, ollama: { baseUrl: 'string', model: 'string', contextLength: 'number', keepAlive: 'string' },
-    openaiCompatible: { baseUrl: 'string', apiKey: 'string', model: 'string', 'customHeaders?': 'record', 'useServerProxy?': 'boolean' },
+    openaiCompatible: { baseUrl: 'string', apiKey: 'string', model: 'string', 'customHeaders?': 'record', 'useServerProxy?': 'boolean', 'requestTimeoutSeconds?': 'number', 'reasoningEffort?': 'string' },
     authorsNote: { enabled: 'boolean', content: 'string', insertionDepth: 'number' },
     sampling: { temperature: 'number', topP: 'number', topK: 'number', repetitionPenalty: 'number', frequencyPenalty: 'number', presencePenalty: 'number', maxTokens: 'number', stopSequences: strings },
   },
@@ -109,6 +109,9 @@ function validateAndRepair(project: ProjectData): void {
   };
   const range = (value: number, path: string, min = 0, max = Infinity, integer = false) => { if (value < min || value > max || (integer && !Number.isInteger(value))) fail(path); };
   const choice = (value: string, values: string[], path: string) => { if (!values.includes(value)) fail(path); };
+  const compatible = project.aiConfig.openaiCompatible;
+  if (compatible.requestTimeoutSeconds !== undefined) range(compatible.requestTimeoutSeconds, 'aiConfig.openaiCompatible.requestTimeoutSeconds', 30, 600, true);
+  if (compatible.reasoningEffort !== undefined) choice(compatible.reasoningEffort, ['low', 'high', 'max'], 'aiConfig.openaiCompatible.reasoningEffort');
   const warnings = new Set(project.recoveryWarnings || []);
   const warn = (message: string) => warnings.add(message);
   for (const key of ['chapters', 'characters', 'locations', 'factions', 'rules', 'events', 'lorebook', 'snapshots', 'foreshadowing'] as const) unique(project[key], key);

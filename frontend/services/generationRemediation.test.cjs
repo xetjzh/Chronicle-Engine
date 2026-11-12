@@ -68,3 +68,15 @@ test('reference retrieval opt-in applies consistently to full chapters and indiv
     for (const call of calls) assert.equal((call.lorebookBlock || '').includes('月面手册'), enabled);
   }
 });
+
+test('GLM checkpoints reject changed thinking effort but allow an extended request timeout', async () => {
+  const p=book();p.aiConfig.activeProvider='openai_compatible';p.aiConfig.openaiCompatible.model='glm-5.3';p.settings.chapterLengthTarget=200;
+  let calls=0,checkpoint;
+  const engine=services(async()=>{calls++;if(calls===3)throw Error('timeout');return calls===1?outline:'文'.repeat(70);})('chapterExpansionEngine').ChapterExpansionEngine;
+  const params={project:p,volumeNumber:1,chapterNumber:1,events:[],onCheckpoint:value=>checkpoint=value};
+  await assert.rejects(engine.generateDeepChapter(params),/timeout/);assert.equal(checkpoint.beats.length,1);
+  const changed={...p,aiConfig:{...p.aiConfig,openaiCompatible:{...p.aiConfig.openaiCompatible,reasoningEffort:'high'}}};
+  await assert.rejects(engine.generateDeepChapter({...params,project:changed,resumeFrom:checkpoint}),/断点/);assert.equal(calls,3);
+  const extended={...p,aiConfig:{...p.aiConfig,openaiCompatible:{...p.aiConfig.openaiCompatible,requestTimeoutSeconds:600}}};
+  const result=await engine.generateDeepChapter({...params,project:extended,resumeFrom:checkpoint});assert.equal(result.beats.length,4);assert.equal(calls,6);
+});

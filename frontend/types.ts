@@ -56,6 +56,8 @@ export interface AIProviderConfig {
   };
   openaiCompatible: {
     useServerProxy?: boolean;
+    reasoningEffort?: 'low' | 'high' | 'max';
+    requestTimeoutSeconds?: number;
     baseUrl: string;
     apiKey: string;
     model: string;

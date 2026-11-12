@@ -1,4 +1,5 @@
 import { AIProviderConfig, AIProviderType, SamplingParams } from '../types';
+import { compatibleRequestPolicy, isGLM53Model } from './compatibleRequestPolicy.ts';
 
 export interface GenerateTextOptions {
   prompt: string;
@@ -7,6 +8,7 @@ export interface GenerateTextOptions {
   authorsNote?: string;         // 作者附注
   overrideSampling?: Partial<SamplingParams>;
   thinkingBudget?: number;
+  reasoningEffort?: 'low' | 'high' | 'max';
   signal?: AbortSignal;
   onText?: (delta: string) => void;
 }
@@ -81,6 +83,19 @@ export class AIProviderService {
 
   private static isGemini25Pro(model: string): boolean {
     return /^gemini-2\.5-pro(?:$|-)/.test(model.split('/').pop() || '');
+  }
+
+  private static requireCompatibleText(data: any, provider: string): string {
+    const choice = data?.choices?.[0], content = choice?.message?.content;
+    if (typeof content === 'string' && content.trim()) return content;
+    if (choice?.finish_reason === 'length') {
+      throw new ProviderRequestError(`${provider} 已响应，但输出达到上限仍未生成正文。思考模型可能已用完输出预算，请提高生成输出上限或降低思考强度后手动重试。`);
+    }
+    if (typeof choice?.message?.reasoning_content === 'string' && choice.message.reasoning_content.trim()) {
+      throw new ProviderRequestError(`${provider} 已响应，但仅返回思考内容，没有最终正文。请检查输出上限与思考强度；思考内容不会作为正文写入。`);
+    }
+    if (choice?.finish_reason === 'content_filter') throw new ProviderRequestError(`${provider} 已响应，但内容过滤阻止了有效正文，请调整请求后重试。`);
+    return this.requireText(content, provider);
   }
 
   /** One deadline includes connection, SDK processing and complete body reads. */
@@ -202,7 +217,7 @@ export class AIProviderService {
     if (response.headers.get('content-type')?.includes('application/json')) {
       const value = await response.json();
       if (init.signal?.aborted) throw this.canceledError();
-      const text = this.requireText(format === 'sse' ? value?.choices?.[0]?.message?.content : value?.message?.content ?? value?.response, provider);
+      const text = format === 'sse' ? this.requireCompatibleText(value, provider) : this.requireText(value?.message?.content ?? value?.response, provider);
       onText(text); return text;
     }
     const { readTextStream } = await import('./textStream');
@@ -382,10 +397,13 @@ export class AIProviderService {
   private static async callOpenAICompatible(
     config: AIProviderConfig,
     options: GenerateTextOptions,
-    timeoutMs = 90000
+    timeoutMs?: number
   ): Promise<string> {
     const model = this.requireModel(config.openaiCompatible.model, 'OpenAI 兼容接口');
     const url = this.endpoint(config.openaiCompatible.baseUrl, 'openai_compatible');
+    const policy = compatibleRequestPolicy(config.openaiCompatible);
+    if (!Number.isInteger(policy.timeoutSeconds) || policy.timeoutSeconds < 30 || policy.timeoutSeconds > 600) throw new ProviderRequestError('兼容接口等待上限须为 30–600 秒的整数。');
+    if (policy.reasoningEffort && !['low', 'high', 'max'].includes(policy.reasoningEffort)) throw new ProviderRequestError('GLM-5.3 思考强度须为 low、high 或 max。');
 
     const sampling = { ...config.sampling, ...options.overrideSampling };
     const fullPrompt = this.assemblePromptWithContext(options);
@@ -405,6 +423,10 @@ export class AIProviderService {
       presence_penalty: sampling.presencePenalty ?? 0.2,
       stream: !!options.onText,
     };
+
+    // GLM-5.3 cannot disable thinking. Use the saved effort (low by default),
+    // with a separate lightweight override for a connectivity test.
+    if (policy.glm53) payload.reasoning_effort = options.reasoningEffort ?? policy.reasoningEffort;
 
     if (sampling.maxTokens) {
       payload.max_tokens = sampling.maxTokens;
@@ -427,7 +449,7 @@ export class AIProviderService {
 
     const relay = !!config.openaiCompatible.useServerProxy;
     const requestUrl = relay ? '/api/openai/chat/completions' : url;
-    return this.boundedRequest('OpenAI 兼容接口', timeoutMs, options.signal, async signal => {
+    return this.boundedRequest('OpenAI 兼容接口', timeoutMs ?? policy.timeoutSeconds * 1000, options.signal, async signal => {
       const init: RequestInit = {
         method: 'POST',
         headers: relay ? { 'Content-Type': 'application/json', 'X-App-Proxy': 'tqHmXyUOiCqsU1IqUeo2MNyqjReMuVZ8' } : headers,
@@ -437,7 +459,7 @@ export class AIProviderService {
       };
       if (options.onText) return this.requestStream(requestUrl, init, 'OpenAI 兼容接口', 'sse', options.onText);
       const data = await this.requestJson(requestUrl, init, 'OpenAI 兼容接口');
-      return this.requireText(data?.choices?.[0]?.message?.content, 'OpenAI 兼容接口');
+      return this.requireCompatibleText(data, 'OpenAI 兼容接口');
     });
   }
 
@@ -489,11 +511,13 @@ export class AIProviderService {
       }
 
       if (provider === 'openai_compatible') {
+        const glm53 = isGLM53Model(this.requireModel(config.openaiCompatible.model, 'OpenAI 兼容接口'));
         await this.callOpenAICompatible(config, {
-          prompt: '请回复测试：连通成功',
+          prompt: '请仅回复两个字：就绪。',
           signal,
-          overrideSampling: { temperature: 0.2, maxTokens: 32, stopSequences: [] },
-        }, this.HEALTH_TIMEOUT_MS);
+          reasoningEffort: glm53 ? 'low' : undefined,
+          overrideSampling: { temperature: 0.2, maxTokens: glm53 ? 2048 : 32, stopSequences: [] },
+        }, glm53 ? 60000 : this.HEALTH_TIMEOUT_MS);
         const latency = Math.round(performance.now() - start);
         return {
           provider: 'openai_compatible',

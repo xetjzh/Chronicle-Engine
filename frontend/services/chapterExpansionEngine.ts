@@ -1,5 +1,6 @@
 import type { ProjectData, ChapterActBeat, WorldEvent, ChapterGenerationCheckpoint } from '../types';
 import { AIProviderService } from './aiProviderService';
+import { compatibleRequestPolicy } from './compatibleRequestPolicy';
 import { buildReferenceIndex, referenceContext } from './referenceRetrieval';
 import { LorebookService } from './lorebookService';
 import { HierarchicalMemoryService } from './hierarchicalMemoryService';
@@ -32,9 +33,11 @@ export class ChapterExpansionEngine {
       if (!result.trim()) throw new Error('章节生成返回的正文为空，请重试。'); return result.trim();
     };
     const eventsBrief = events.map(e => `[${e.simulationTime}] ${e.title}：${e.description}`).join('\n').slice(0, 6000) || '尚无模拟事件，依据本书简介与作者要求创作。';
+    const reasoningEffort = project.aiConfig.activeProvider === 'openai_compatible' ? compatibleRequestPolicy(project.aiConfig.openaiCompatible).reasoningEffort : undefined;
     const identity = JSON.stringify([context, eventsBrief, userConstraint || '', target, params.povCharacterId || '', lorebookBlock,
       project.aiConfig.activeProvider, project.aiConfig.sampling, authorsNote,
-      project.aiConfig.gemini.model, project.aiConfig.openaiCompatible.model, project.aiConfig.ollama.model]);
+      project.aiConfig.gemini.model, project.aiConfig.openaiCompatible.model, project.aiConfig.ollama.model,
+      ...(reasoningEffort ? [{ reasoningEffort }] : [])]);
     let hash = 2166136261; for (let i = 0; i < identity.length; i++) hash = Math.imul(hash ^ identity.charCodeAt(i), 16777619);
     const signature = (hash >>> 0).toString(16), resume = params.resumeFrom;
     if (resume && (resume.version !== 1 || resume.signature !== signature || resume.tasks.length !== 4)) throw new Error('断点与当前作品或设置不一致，请清除断点后重新起草。');

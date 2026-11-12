@@ -28,6 +28,14 @@ test('optional relay selection round-trips and rejects a non-boolean value', () 
   project.aiConfig.openaiCompatible.useServerProxy = 'yes';
   assert.throws(() => parseProjectBackup(JSON.stringify(project)), /useServerProxy/);
 });
+
+test('compatible generation timeout and reasoning settings validate optional ranges and enums', () => {
+  const project=backup();Object.assign(project.aiConfig.openaiCompatible,{requestTimeoutSeconds:300,reasoningEffort:'low'});
+  const parsed=parseProjectBackup(JSON.stringify(project));assert.equal(parsed.aiConfig.openaiCompatible.requestTimeoutSeconds,300);assert.equal(parsed.aiConfig.openaiCompatible.reasoningEffort,'low');
+  for (const extra of [{requestTimeoutSeconds:29},{requestTimeoutSeconds:601},{requestTimeoutSeconds:30.5},{reasoningEffort:'medium'}]) {
+    const invalid=structuredClone(project);Object.assign(invalid.aiConfig.openaiCompatible,extra);assert.throws(()=>parseProjectBackup(JSON.stringify(invalid)),/requestTimeoutSeconds|reasoningEffort/);
+  }
+});
 test('rejects identity-only JSON before it can crash a workspace', () => {
   assert.throws(() => parseProjectBackup('{"id":"x","worldName":"x"}'), /备份/);
 });

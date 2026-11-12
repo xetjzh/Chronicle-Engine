@@ -7,7 +7,7 @@ const { transform } = require('sucrase');
 
 // Keep the service real and replace only network/SDK boundaries. No provider
 // credentials, live inference, or billable requests are used by this suite.
-function service({ fetch, generateContent, generateContentStream, timerMs } = {}) {
+function service({ fetch, generateContent, generateContentStream, timerMs, deadlines } = {}) {
   const timers = new Set();
   const output = transform(fs.readFileSync(path.join(__dirname, 'aiProviderService.ts'), 'utf8'), {
     transforms: ['typescript', 'imports'],
@@ -18,6 +18,7 @@ function service({ fetch, generateContent, generateContentStream, timerMs } = {}
     process: { env: { API_KEY: 'environment-secret' } },
     fetch: fetch || (() => { throw new Error('Unexpected network request'); }),
     setTimeout(callback, delay) {
+      deadlines?.push(delay);
       const timer = setTimeout(() => { timers.delete(timer); callback(); }, timerMs ?? delay);
       timers.add(timer);
       return timer;
@@ -25,6 +26,7 @@ function service({ fetch, generateContent, generateContentStream, timerMs } = {}
     clearTimeout(timer) { timers.delete(timer); clearTimeout(timer); },
   }, { filename: 'aiProviderService.ts' });
   evaluate(specifier => {
+    if (specifier === './compatibleRequestPolicy.ts') return require('./compatibleRequestPolicy.ts');
     if (specifier === './textStream') return require('../testSupport/loadService.cjs').loadService(path.join(__dirname, 'textStream.ts'));
     assert.equal(specifier, '@google/genai');
     return { GoogleGenAI: class { models = { generateContent, generateContentStream }; } };
@@ -158,6 +160,67 @@ test('compatible health uses a small test output budget instead of the project g
   assert.equal((await AIProviderService.testProviderHealth('openai_compatible', config())).ok, true);
 });
 
+test('GLM-5.3 health reserves room for mandatory reasoning and uses low effort without disabling thinking', async () => {
+  const input = config(); input.openaiCompatible.model = 'glm-5.3';
+  input.openaiCompatible.reasoningEffort = 'max'; input.openaiCompatible.requestTimeoutSeconds = 600;
+  input.sampling.maxTokens = 32; let calls = 0;
+  const { AIProviderService } = service({ fetch: async (_url, init) => {
+    calls++; const payload = JSON.parse(init.body);
+    assert.equal(payload.reasoning_effort, 'low'); assert.ok(payload.max_tokens >= 1024 && payload.max_tokens <= 2048);
+    assert.equal(payload.thinking, undefined); assert.equal(payload.stop, undefined);
+    return payload.max_tokens <= 32 ? json({choices:[{message:{content:'',reasoning_content:'private reasoning'},finish_reason:'length'}]}) : completion('就绪');
+  } });
+  assert.equal((await AIProviderService.testProviderHealth('openai_compatible', input)).ok, true);
+  assert.equal(calls, 1); assert.equal(input.sampling.maxTokens, 32);
+});
+
+test('GLM health allows a bounded reasoning deadline while normal compatible tests keep their short deadline', async () => {
+  for (const model of ['glm-5.3', 'configured-model']) {
+    const input = config(); input.openaiCompatible.model = model; const deadlines = [];
+    const { AIProviderService } = service({ deadlines, fetch: async () => completion('就绪') });
+    assert.equal((await AIProviderService.testProviderHealth('openai_compatible', input)).ok, true);
+    assert.deepEqual(deadlines, [model === 'glm-5.3' ? 60000 : 20000]);
+  }
+});
+
+test('compatible reasoning-only or length-limited replies stay failed with safe actionable diagnostics', async () => {
+  for (const finish_reason of ['length', 'stop']) for (const streamed of [false, true]) {
+    let calls = 0; const chunks = [];
+    const { AIProviderService } = service({ fetch: async () => { calls++; return json({choices:[{message:{content:'',reasoning_content:'private-reasoning key-secret'},finish_reason}]}); } });
+    await assert.rejects(AIProviderService.generateText(config(), {prompt:'test',...(streamed?{onText:t=>chunks.push(t)}:{})}), error => {
+      assert.match(error.message, finish_reason === 'length' ? /输出.*上限|输出.*限制/ : /仅.*思考|思考.*正文/);
+      assert.doesNotMatch(error.message, /private-reasoning|key-secret/); return true;
+    });
+    assert.equal(calls, 1); assert.equal(chunks.length, 0);
+  }
+});
+
+test('GLM generation retains the saved output cap while using the selected reasoning effort and request deadline', async () => {
+  const input = config(); input.openaiCompatible.model = 'glm-5.3'; input.sampling.maxTokens = 7000;
+  input.openaiCompatible.reasoningEffort = 'high'; input.openaiCompatible.requestTimeoutSeconds = 300; const deadlines = [];
+  const { AIProviderService } = service({deadlines, fetch: async (_url, init) => {
+    const payload = JSON.parse(init.body); assert.equal(payload.max_tokens, 7000); assert.equal(payload.reasoning_effort, 'high'); return completion('正文');
+  }});
+  assert.equal(await AIProviderService.generateText(input, {prompt:'写作'}), '正文');
+  assert.deepEqual(deadlines, [300000]); assert.equal(input.sampling.maxTokens, 7000);
+});
+
+test('compatible generation defaults to low effort and 300 seconds only for GLM-5.3', async () => {
+  for (const model of ['glm-5.3', 'configured-model']) {
+    const input = config(); input.openaiCompatible.model = model; const deadlines = [];
+    const {AIProviderService} = service({deadlines,fetch:async (_url,init)=>{const payload=JSON.parse(init.body);assert.equal(payload.reasoning_effort,model==='glm-5.3'?'low':undefined);return completion('正文');}});
+    assert.equal(await AIProviderService.generateText(input,{prompt:'写作'}),'正文');assert.deepEqual(deadlines,[model==='glm-5.3'?300000:90000]);
+  }
+});
+
+test('invalid compatible timeouts or GLM reasoning settings fail before making a provider request', async () => {
+  for (const extra of [{requestTimeoutSeconds:0},{requestTimeoutSeconds:601},{requestTimeoutSeconds:60.5},{requestTimeoutSeconds:NaN},{reasoningEffort:'medium'}]) {
+    const input = config(); Object.assign(input.openaiCompatible,{model:'glm-5.3'},extra); let calls=0;
+    const {AIProviderService}=service({fetch:async()=>{calls++;return completion('unexpected');}});
+    await assert.rejects(AIProviderService.generateText(input,{prompt:'写作'}),/等待|思考强度/);assert.equal(calls,0);
+  }
+});
+
 test('invalid endpoint protocols, embedded credentials and blank models fail before any request', async () => {
   for (const provider of ['ollama', 'openai_compatible']) {
     for (const baseUrl of ['', 'not-a-url', 'file:///tmp/model', 'https://user:password@gateway.example/v1']) {
@@ -233,22 +296,23 @@ test('generation cancellation covers response body reads and clears deadline tim
 
 test('deadline bounds generation including slow response body reads', async () => {
   for (const provider of ['ollama', 'openai_compatible', 'gemini']) {
-    let requestSignal;
+    let requestSignal, releaseBody;
     const { AIProviderService, timers } = service({ timerMs: 5,
       fetch: async (_url, init) => {
         requestSignal = init.signal;
-        return { ok: true, json: () => new Promise(resolve => setTimeout(() => resolve({
+        return { ok: true, json: () => new Promise(resolve => { releaseBody = () => resolve({
           message: { content: 'too late' }, choices: [{ message: { content: 'too late' } }],
-        }), 30)) };
+        }); }) };
       },
       generateContent: async input => {
         requestSignal = input.config.abortSignal;
-        return new Promise(resolve => setTimeout(() => resolve({ text: 'too late' }), 30));
+        return new Promise(resolve => { releaseBody = () => resolve({ text: 'too late' }); });
       },
     });
     await assert.rejects(AIProviderService.generateText(config(provider), { prompt: 'test' }), /超时/);
     assert.equal(requestSignal.aborted, true);
     assert.equal(timers.size, 0);
+    assert.equal(typeof releaseBody, 'function'); releaseBody();
   }
 });
 

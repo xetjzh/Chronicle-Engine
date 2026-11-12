@@ -32,7 +32,7 @@ test('relay rejects disabled, foreign origin, target changes, unsafe headers, ma
   const off = await start(t, readConfig({}), deps); assert.equal((await post(off.url)).status, 503);
   const runtime = await start(t, config({ API_PAYLOAD_MAX_SIZE: '1kb' }), deps);
   for (const headers of [{ origin: 'https://attacker.test' }, { origin: 'null' }, { 'x-app-proxy': 'wrong' }]) assert.equal((await post(runtime.url, body(), headers)).status, 403);
-  for (const value of [body({ upstreamUrl: 'https://attacker.test/chat/completions' }), body({ headers: { Host: 'private.test' } }), body({ body: { model: 'glm-5.3', messages: [], stream: false } }), body({ body: { ...body().body, unexpected: true } })]) assert.equal((await post(runtime.url, value)).status, 400);
+  for (const value of [body({ upstreamUrl: 'https://attacker.test/chat/completions' }), body({ headers: { Host: 'private.test' } }), body({ body: { model: 'glm-5.3', messages: [], stream: false } }), body({ body: { ...body().body, unexpected: true } }), body({body:{...body().body,reasoning_effort:'disabled'}}), body({body:{...body().body,reasoning_effort:{invalid:true}}})]) assert.equal((await post(runtime.url, value)).status, 400);
   assert.equal((await post(runtime.url, body({ headers: {} }))).status, 401);
   assert.equal((await post(runtime.url, body({ body: { ...body().body, messages: [{role:'user',content:'x'.repeat(2000)}] } }))).status, 413);
   assert.equal((await fetch(runtime.url + '/api/openai/chat/completions')).status, 405); assert.equal(calls, 0);
@@ -100,7 +100,10 @@ test('actual frontend provider service completes health and streamed generation 
   let calls = 0;
   const runtime = await start(t, config({ PROXY_HEADER: DEFAULT_PROXY_MARKER }), {fetch: async (_url, init) => {
     calls++; assert.equal(new Headers(init.headers).get('authorization'), 'Bearer test-user-key');
-    return JSON.parse(init.body).stream
+    const payload = JSON.parse(init.body);
+    if (calls === 1) { assert.equal(payload.reasoning_effort, 'low'); assert.equal(payload.max_tokens, 2048); }
+    else assert.equal(payload.reasoning_effort, 'low');
+    return payload.stream
       ? new Response('data: {"choices":[{"delta":{"content":"实时回复"}}]}\n\ndata: [DONE]\n\n', {headers:{'content-type':'text/event-stream'}})
       : Response.json({choices:[{message:{content:'就绪'}}]});
   }});

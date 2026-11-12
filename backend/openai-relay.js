@@ -2,7 +2,7 @@ import express from 'express';
 
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const headerNames = new Set(['authorization', 'x-api-key', 'api-key', 'openai-organization', 'openai-project']);
-const fields = new Set(['model', 'messages', 'stream', 'temperature', 'top_p', 'frequency_penalty', 'presence_penalty', 'max_tokens', 'stop']);
+const fields = new Set(['model', 'messages', 'stream', 'temperature', 'top_p', 'frequency_penalty', 'presence_penalty', 'max_tokens', 'stop', 'reasoning_effort']);
 const maximumResponseBytes = 8 * 1024 * 1024;
 
 function validBody(body) {
@@ -11,6 +11,7 @@ function validBody(body) {
     && Array.isArray(body.messages) && body.messages.length > 0 && body.messages.length <= 1000
     && body.messages.every(m => object(m) && ['system', 'user', 'assistant'].includes(m.role) && typeof m.content === 'string')
     && (body.stream === undefined || typeof body.stream === 'boolean')
+    && (body.reasoning_effort === undefined || ['low', 'high', 'max'].includes(body.reasoning_effort))
     && ['temperature', 'top_p', 'frequency_penalty', 'presence_penalty', 'max_tokens'].every(key => body[key] === undefined || (typeof body[key] === 'number' && Number.isFinite(body[key])))
     && (body.max_tokens === undefined || (Number.isInteger(body.max_tokens) && body.max_tokens > 0))
     && (body.stop === undefined || (Array.isArray(body.stop) && body.stop.length <= 64 && body.stop.every(s => typeof s === 'string' && s.length <= 4096)));

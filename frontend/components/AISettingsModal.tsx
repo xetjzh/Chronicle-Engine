@@ -2,6 +2,7 @@ import { Dialog } from './Dialog';
 import React, { useState } from 'react';
 import { ProjectData, AIProviderConfig, AIProviderType, AIPresetType } from '../types';
 import { AIProviderService, ProviderHealthResult } from '../services/aiProviderService';
+import { compatibleRequestPolicy } from '../services/compatibleRequestPolicy.ts';
 import {
   X, Cpu, Server, Sparkles, CheckCircle2, AlertCircle, RefreshCw,
   Settings2, Shield, Check, Sliders, FileText, Zap, BookOpen
@@ -415,6 +416,11 @@ export const AISettingsModal: React.FC<AISettingsModalProps> = ({
                 </div>
                 <label className="flex items-start gap-2 text-slate-300"><input aria-label="通过本服务转发兼容接口" type="checkbox" checked={!!config.openaiCompatible.useServerProxy} onChange={e => updateConfig(c => ({ ...c, openaiCompatible: { ...c.openaiCompatible, useServerProxy: e.target.checked } }))} />通过本服务转发（用于接口不允许浏览器跨域的情况）</label>
                 <p className="text-[11px] text-slate-400">{config.openaiCompatible.useServerProxy ? '请求与密钥将经过当前部署服务器；管理员须配置匹配的上游地址及允许的网页来源。服务器逐请求使用密钥，不保存。' : '浏览器直接连接所填服务，接口须允许当前网页跨域访问。部署服务器能连接成功，不代表浏览器可以直连。'}</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label className="block text-slate-400">客户端每次生成等待上限（秒）<input aria-label="兼容接口等待上限（秒）" type="number" min={30} max={600} step={1} value={compatibleRequestPolicy(config.openaiCompatible).timeoutSeconds} onChange={e => updateConfig(c => ({ ...c, openaiCompatible: { ...c.openaiCompatible, requestTimeoutSeconds: Math.min(600, Math.max(30, Math.round(Number(e.target.value) || 30))) } }))} className="mt-1 w-full rounded border border-slate-700 bg-slate-800 p-2 text-white" /></label>
+                  {compatibleRequestPolicy(config.openaiCompatible).glm53 && <label className="block text-slate-400">GLM-5.3 思考强度<select aria-label="GLM-5.3 思考强度" value={compatibleRequestPolicy(config.openaiCompatible).reasoningEffort} onChange={e => updateConfig(c => ({ ...c, activePreset: 'custom', openaiCompatible: { ...c.openaiCompatible, reasoningEffort: e.target.value as 'low' | 'high' | 'max' } }))} className="mt-1 w-full rounded border border-slate-700 bg-slate-800 p-2 text-white"><option value="low">low · 更快响应</option><option value="high">high · 增强推理</option><option value="max">max · 深度推理，可能较慢</option></select></label>}
+                </div>
+                <p className="text-[11px] text-slate-400">等待上限针对每一次生成请求，不是全章总时长。使用服务端转发时，管理员还需将 API_TIMEOUT_MS 设置为不少于此时长；外部网关也需允许相应的等待时间。超时不会自动重试。</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="text-[11px] text-slate-400 block mb-1">API Base URL</label>
